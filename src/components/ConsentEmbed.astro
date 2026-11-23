@@ -1,0 +1,98 @@
+---
+/**
+ * A YouTube or Vimeo embed that loads only after the visitor allows its category.
+ *
+ * Gating is c15t's own iframe blocker: the iframe carries `data-src` and
+ * `data-category` and no `src`, so the browser makes no request to the video host
+ * until consent. The placeholder shows in the meantime and its button opens the
+ * preference dialog (`[data-emdash-privacy-open]` is wired in the banner bundle).
+ *
+ * The URL is built from the provider and an ID that is checked against a pattern.
+ * It never comes from content. Use this in Astro templates or as the render target
+ * for an embed block. Do not use a raw `<iframe src>` for these providers.
+ */
+import { embedUrl, type EmbedProvider } from "../embed-url.js";
+
+interface Props {
+	provider: EmbedProvider;
+	id: string;
+	title: string;
+	/** Which consent the embed needs. Analytics is rarely right for a video, so the default is marketing. */
+	category?: "analytics" | "marketing";
+	lang?: "de" | "en";
+}
+
+const { provider, id, title, category = "marketing", lang = "de" } = Astro.props;
+const src = embedUrl(provider, id);
+// c15t category names: analytics = measurement, marketing = marketing
+const c15tCategory = category === "analytics" ? "measurement" : "marketing";
+const copy =
+	lang === "en"
+		? { text: "This video is hosted by a third party. It loads only after you allow the matching cookies.", button: "Privacy settings", invalid: "Invalid video reference." }
+		: { text: "Dieses Video wird von einem Drittanbieter bereitgestellt. Es wird erst geladen, wenn Sie die passenden Cookies erlauben.", button: "Datenschutz-Einstellungen", invalid: "Ungültige Videoangabe." };
+---
+
+{
+	src ? (
+		<div class="emdash-privacy-embed">
+			<iframe data-src={src} data-category={c15tCategory} title={title} allow="encrypted-media; picture-in-picture" allowfullscreen loading="lazy" />
+			<div class="emdash-privacy-placeholder">
+				<p>{copy.text}</p>
+				<button type="button" data-emdash-privacy-open>
+					{copy.button}
+				</button>
+			</div>
+		</div>
+	) : (
+		<p class="emdash-privacy-invalid">{copy.invalid}</p>
+	)
+}
+
+<style>
+	.emdash-privacy-embed {
+		position: relative;
+		aspect-ratio: 16 / 9;
+		background: var(--color-surface, #f3f4f6);
+		border-radius: var(--radius, 10px);
+		overflow: hidden;
+	}
+	/* c15t only sets src once the category is allowed; before that the iframe is hidden. */
+	.emdash-privacy-embed iframe {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		border: 0;
+	}
+	.emdash-privacy-embed iframe:not([src]) {
+		display: none;
+	}
+	.emdash-privacy-placeholder {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.75rem;
+		padding: 1rem;
+		text-align: center;
+		color: var(--color-text, #111827);
+	}
+	.emdash-privacy-embed iframe[src] + .emdash-privacy-placeholder {
+		display: none;
+	}
+	.emdash-privacy-placeholder button {
+		font: inherit;
+		padding: 0.5rem 1rem;
+		border-radius: var(--radius, 8px);
+		border: 1px solid var(--color-border, #d1d5db);
+		background: var(--color-bg, #ffffff);
+		color: var(--color-text, #111827);
+		cursor: pointer;
+	}
+	.emdash-privacy-placeholder button:focus-visible {
+		outline: 2px solid var(--color-brand, #2563eb);
+		outline-offset: 2px;
+	}
+</style>

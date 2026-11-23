@@ -9,9 +9,13 @@
  * session (default permission `plugins:manage`).
  */
 import { purgeExpired } from "./purge.js";
+import { isBannerPosition, BANNER_POSITIONS } from "./presentation.js";
+import { isLanguageSetting } from "./locale.js";
+import { parseAllowedHosts, parseServices } from "./services.js";
 import { SETTINGS_DEFAULTS } from "./shared.js";
 
 export const ADMIN_PAGE_PATH = "/settings";
+const EXPORT_PATH = "/_emdash/api/plugins/emdash-privacy/consent-export";
 const SAVE_ACTION = "save_privacy";
 const PURGE_ACTION = "purge_now";
 
@@ -39,8 +43,10 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 	const v = {
 		enabled: (await readKv<boolean>(ctx, "enabled")) ?? d.enabled,
 		services: (await readKv<string>(ctx, "services")) ?? d.services,
+		allowedScriptHosts: (await readKv<string>(ctx, "allowedScriptHosts")) ?? d.allowedScriptHosts,
 		language: (await readKv<string>(ctx, "language")) ?? d.language,
 		colorScheme: (await readKv<string>(ctx, "colorScheme")) ?? d.colorScheme,
+		bannerPosition: (await readKv<string>(ctx, "bannerPosition")) ?? d.bannerPosition,
 		accentColor: (await readKv<string>(ctx, "accentColor")) ?? "",
 		requireChoice: (await readKv<boolean>(ctx, "requireChoice")) ?? d.requireChoice,
 		privacyUrl: (await readKv<string>(ctx, "privacyUrl")) ?? "",
@@ -52,6 +58,7 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 	};
 	const siteId = siteHost(ctx);
 	const total = await ctx.storage.consents.count({ siteId });
+	const exportUrl = typeof ctx.url === "function" ? ctx.url(EXPORT_PATH) : EXPORT_PATH;
 
 	return {
 		blocks: [
@@ -75,17 +82,19 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 						label: "Tracked services (JSON)",
 						multiline: true,
 						initial_value: v.services,
-						placeholder: '[{"id":"ga4","name":"Google Analytics","category":"analytics","src":"https://..."}]',
+						placeholder:
+							'[{"id":"ga4","name":"Google Analytics","category":"analytics","preset":"google-tag","options":{"id":"G-XXXXXXXX"}}]',
 					},
 					{
-						type: "select",
+						type: "text_input",
+						action_id: "allowedScriptHosts",
+						label: "Allowed script hosts (optional, comma-separated domains)",
+						initial_value: v.allowedScriptHosts,
+					},
+					{
+						type: "text_input",
 						action_id: "language",
-						label: "Banner language",
-						options: [
-							{ label: "Auto (page locale)", value: "auto" },
-							{ label: "Deutsch", value: "de" },
-							{ label: "English", value: "en" },
-						],
+						label: "Banner language: auto, or a code such as de, en, fr",
 						initial_value: v.language,
 					},
 					{
@@ -98,6 +107,13 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 							{ label: "Dark", value: "dark" },
 						],
 						initial_value: v.colorScheme,
+					},
+					{
+						type: "select",
+						action_id: "bannerPosition",
+						label: "Banner position",
+						options: BANNER_POSITIONS.map((value) => ({ label: value, value })),
+						initial_value: v.bannerPosition,
 					},
 					{ type: "text_input", action_id: "accentColor", label: "Accent color (CSS color)", initial_value: v.accentColor },
 					{
@@ -138,6 +154,7 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 			{
 				type: "actions",
 				elements: [
+					{ type: "link", label: "Download consent records (CSV)", target: { kind: "external", url: exportUrl } },
 					{
 						type: "button",
 						label: "Delete expired records now",
@@ -158,26 +175,54 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 	};
 }
 
-/** Validates + persists the form. Returns an error message or null. */
-async function save(ctx: any, values: Record<string, unknown>): Promise<string | null> {
-	// services must be a JSON array, or the banner would silently vanish
-	const rawServices = String(values.services ?? "[]").trim() || "[]";
+/** A policy link: a relative path or an https URL. Empty is allowed (link hidden). */
+function policyUrlError(value: string): string | null {
+	if (!value) return null;
+	if (value.startsWith("/") && !value.startsWith("//")) return null;
 	try {
-		if (!Array.isArray(JSON.parse(rawServices))) return "Services must be a JSON array.";
+		return new URL(value).protocol === "https:" ? null : "must be an https:// URL or a path starting with /";
 	} catch {
-		return "Services is not valid JSON.";
+		return "must be an https:// URL or a path starting with /";
 	}
+}
+
+/**
+ * Validates the whole form, then writes it. Nothing is written unless every field is valid,
+ * so a bad service entry cannot silently replace a working config. Returns an error or null.
+ */
+async function save(ctx: any, values: Record<string, unknown>): Promise<string | null> {
 	const str = (k: string) => (typeof values[k] === "string" ? (values[k] as string).trim() : "");
 	const num = (k: string, fallback: number) => {
 		const n = Number(values[k]);
 		return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
 	};
+
+	const hosts = parseAllowedHosts(str("allowedScriptHosts"));
+	if (hosts.error) return hosts.error;
+
+	const services = parseServices(str("services") || "[]", hosts.hosts);
+	if (services.errors.length) {
+		const shown = services.errors.slice(0, 3).join("; ");
+		return services.errors.length > 3 ? `${shown} (+${services.errors.length - 3} more)` : shown;
+	}
+
+	if (!isLanguageSetting(str("language") || "auto")) return "Language must be 'auto' or a language code such as de or en.";
+	const position = str("bannerPosition") || SETTINGS_DEFAULTS.bannerPosition;
+	if (!isBannerPosition(position)) return "Banner position is not valid.";
+
+	for (const k of ["privacyUrl", "imprintUrl", "cookieUrl"] as const) {
+		const err = policyUrlError(str(k));
+		if (err) return `${k === "privacyUrl" ? "Privacy" : k === "imprintUrl" ? "Imprint" : "Cookie"} URL ${err}.`;
+	}
+
 	const scheme = ["system", "light", "dark"].includes(str("colorScheme")) ? str("colorScheme") : "system";
 	const writes: Record<string, unknown> = {
 		enabled: values.enabled === true,
-		services: rawServices,
-		language: ["auto", "de", "en"].includes(str("language")) ? str("language") : "auto",
+		services: str("services") || "[]",
+		allowedScriptHosts: hosts.hosts.join(" "),
+		language: str("language") || "auto",
 		colorScheme: scheme,
+		bannerPosition: position,
 		accentColor: str("accentColor"),
 		requireChoice: values.requireChoice === true,
 		privacyUrl: str("privacyUrl"),

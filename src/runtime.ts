@@ -1,25 +1,34 @@
 /**
  * Runtime behaviour: the `page:fragments` hook that injects the banner, the
- * public `save`/`services`/`assets` routes, and the daily retention purge.
+ * public `save`/`services`/`assets` routes, the admin-only CSV export, and the
+ * retention purge.
  *
  * Security posture (public routes):
  *   - site id is derived SERVER-SIDE from the configured site URL, never the payload
  *   - the save body is strictly validated (strict schema; a client `siteId` is rejected)
- *   - abuse control is a Cloudflare rate-limiting rule on the route path (go-live
- *     checklist); we do not rate-limit in code
+ *   - `save` refuses cross-origin requests (Origin / Sec-Fetch-Site check)
+ *   - abuse control is a Cloudflare rate-limiting rule on the route path (see the
+ *     README). The plugin context has no Worker bindings, so there is no in-code limiter
  *   - the visitor IP is never read or stored by this plugin
  */
-import { z } from "zod";
+import { PluginRouteError, pluginResponse } from "emdash";
 import type { PageFragmentContribution } from "emdash";
+import { z } from "zod";
 import { adminRoute } from "./admin-page.js";
+import { consentCsvLine, csvHeaderLine, type ConsentRecord } from "./export.js";
+import { isSameOriginRequest, safeInlineJson } from "./security.js";
 import { purgeDue, purgeExpired } from "./purge.js";
+import { isPolicyPage } from "./presentation.js";
+import { languageCandidate } from "./locale.js";
 import { buildPolicyRule } from "./rule.js";
+import { buildClearOnRevocation, parseAllowedHosts, parseServices } from "./services.js";
 import { BANNER_HASH, BANNER_JS } from "./assets.generated.js";
-import { BANNER_VERSION, PLUGIN_ID, SETTINGS_DEFAULTS, resolveLanguage } from "./shared.js";
+import { BANNER_VERSION, PLUGIN_ID, SETTINGS_DEFAULTS } from "./shared.js";
 
 /** Route that serves the bundle. The hash is in the name, so it is immutable. */
 const BUNDLE_ROUTE = `assets/banner-${BANNER_HASH}`;
 const BUNDLE_URL = `/_emdash/api/plugins/${PLUGIN_ID}/${BUNDLE_ROUTE}`;
+const EXPORT_ROUTE = "consent-export";
 
 /**
  * Tiny inline loader. The ~370 KB bundle is NOT inlined per page. It is cached
@@ -50,43 +59,27 @@ const LOADER = makeLoader(BUNDLE_URL, BANNER_HASH);
 
 // ── settings ────────────────────────────────────────────────────────────────
 
-interface ResolvedSettings {
-	enabled: boolean;
-	services: unknown[];
-	colorScheme: "system" | "light" | "dark";
-	language: string;
-	requireChoice: boolean;
-	accentColor?: string;
-	privacyUrl?: string;
-	imprintUrl?: string;
-	cookieUrl?: string;
-	policyVersion: string;
-	cookieMaxAgeMonths: number;
-	retentionMonths: number;
-}
-
 async function readSetting<T>(ctx: any, key: string): Promise<T | undefined> {
 	// Prefer the newer SettingsAccess; fall back to the KV convention.
 	if (ctx.settings?.get) return (await ctx.settings.get(key)) ?? undefined;
 	return (await ctx.kv.get(`settings:${key}`)) ?? undefined;
 }
 
-async function loadSettings(ctx: any): Promise<ResolvedSettings> {
+async function loadSettings(ctx: any) {
 	const d = SETTINGS_DEFAULTS;
-	let services: unknown[] = [];
+	const hostsResult = parseAllowedHosts(await readSetting<string>(ctx, "allowedScriptHosts"));
 	const rawServices = (await readSetting<string>(ctx, "services")) ?? d.services;
-	try {
-		const parsed = typeof rawServices === "string" ? JSON.parse(rawServices) : rawServices;
-		if (Array.isArray(parsed)) services = parsed;
-	} catch {
-		services = []; // bad JSON -> no services -> no banner, logged below
-		ctx.log?.warn?.("[emdash-privacy] services setting is not valid JSON; treating as empty");
+	const parsed = parseServices(rawServices, hostsResult.hosts);
+	if (parsed.errors.length) {
+		// Bad entries are dropped so the banner still works for the valid ones. The admin form blocks saving them.
+		ctx.log?.warn?.(`[emdash-privacy] ${parsed.errors.length} invalid service entr(y/ies) ignored: ${parsed.errors[0]}`);
 	}
 	return {
 		enabled: (await readSetting<boolean>(ctx, "enabled")) ?? d.enabled,
-		services,
-		colorScheme: (await readSetting<ResolvedSettings["colorScheme"]>(ctx, "colorScheme")) ?? d.colorScheme,
+		services: parsed.services,
+		colorScheme: (await readSetting<"system" | "light" | "dark">(ctx, "colorScheme")) ?? d.colorScheme,
 		language: (await readSetting<string>(ctx, "language")) ?? d.language,
+		bannerPosition: (await readSetting<string>(ctx, "bannerPosition")) ?? d.bannerPosition,
 		requireChoice: (await readSetting<boolean>(ctx, "requireChoice")) ?? d.requireChoice,
 		accentColor: await readSetting<string>(ctx, "accentColor"),
 		privacyUrl: await readSetting<string>(ctx, "privacyUrl"),
@@ -96,17 +89,6 @@ async function loadSettings(ctx: any): Promise<ResolvedSettings> {
 		cookieMaxAgeMonths: (await readSetting<number>(ctx, "cookieMaxAgeMonths")) ?? d.cookieMaxAgeMonths,
 		retentionMonths: (await readSetting<number>(ctx, "retentionMonths")) ?? d.retentionMonths,
 	};
-}
-
-/** c15t Script[] built from the operator's services list. "analytics" => measurement. */
-function buildScripts(services: any[]): unknown[] {
-	return services
-		.filter((s) => s && typeof s.src === "string")
-		.map((s) => ({
-			id: String(s.id ?? s.name ?? s.src),
-			src: String(s.src),
-			category: s.category === "analytics" ? "measurement" : "marketing",
-		}));
 }
 
 // ── host-derived site id (never trust the payload) ────────────────────────────
@@ -154,7 +136,39 @@ export const consentRoutes = {
 	// Block Kit settings page behind the sidebar link (admin-session gated)
 	admin: adminRoute,
 
-	// single source of truth for the banner AND the (future) Datenschutz text
+	// Consent proof as CSV. Private (admin session, plugins:manage), raw response so it downloads as a file.
+	[EXPORT_ROUTE]: {
+		response: "raw" as const,
+		handler: async (ctx: any) => {
+			const siteId = siteIdFromCtx(ctx);
+			const lines = [csvHeaderLine()];
+			let cursor: string | undefined;
+			// Page through the whole table. The response is built in memory (plugin responses are
+			// text or bytes, not a stream), so very large histories need a future streaming route.
+			do {
+				const page = await ctx.storage.consents.query({
+					where: { siteId },
+					orderBy: { ts: "asc" },
+					limit: 100,
+					cursor,
+				});
+				for (const item of page.items) lines.push(consentCsvLine(item.data as ConsentRecord));
+				cursor = page.hasMore ? page.cursor : undefined;
+			} while (cursor);
+			return pluginResponse({
+				status: 200,
+				headers: {
+					"content-type": "text/csv; charset=utf-8",
+					"content-disposition": 'attachment; filename="consent-export.csv"',
+					"cache-control": "private, no-store",
+					"x-content-type-options": "nosniff",
+				},
+				body: { kind: "text", value: `${lines.join("\r\n")}\r\n` },
+			});
+		},
+	},
+
+	// single source of truth for the banner AND the Datenschutz text
 	services: {
 		public: true,
 		handler: async (ctx: any) => (await loadSettings(ctx)).services,
@@ -164,6 +178,10 @@ export const consentRoutes = {
 		public: true,
 		input: saveSchema,
 		handler: async (ctx: any) => {
+			// CSRF: a cross-site page must not be able to post a consent record for this visitor.
+			if (!isSameOriginRequest(ctx.request?.headers ?? {}, ctx.request?.url ?? "", ctx.site?.url)) {
+				throw PluginRouteError.forbidden("Cross-origin consent save refused");
+			}
 			// c15t reports all five of its categories; we offer three. Keep only the
 			// known keys (never widen the stored row) instead of rejecting - a
 			// reject would drop a legitimate consent proof. Unknown keys are ignored.
@@ -171,10 +189,6 @@ export const consentRoutes = {
 			for (const k of ALLOWED_GRANT_KEYS) grants[k] = ctx.input.grants[k] === true;
 			grants.necessary = true; // always on
 			const siteId = siteIdFromCtx(ctx);
-			// Abuse control for this PUBLIC route is a Cloudflare rate-limiting rule on
-			// `/_emdash/api/plugins/emdash-privacy/save` (go-live checklist, documented
-			// in the README). We do NOT rate-limit in code: it added a kv read+write to
-			// every legitimate save, and a soft kv counter is not a real limit anyway.
 			await ctx.storage.consents.put(crypto.randomUUID(), {
 				siteId, // host-attested, authoritative
 				subjectId: ctx.input.subjectId, // c15t random client id, not person-derived
@@ -239,25 +253,27 @@ export const privacyHooks = {
 			// no banner when disabled or when there is nothing to consent to
 			if (!s.enabled || s.services.length === 0) return null;
 
-			const locale = resolveLanguage(s.language, event.page?.locale);
-			const rule = buildPolicyRule({
-				policyVersion: s.policyVersion,
-				cookieMaxAgeMonths: s.cookieMaxAgeMonths,
-			});
+			const policyUrls = [s.privacyUrl, s.cookieUrl, s.imprintUrl];
 			const config = {
-				locale,
+				// the browser picks the language from the bundled translations, see locale.ts
+				language: languageCandidate(s.language, event.page?.locale),
 				colorScheme: s.colorScheme,
 				requireChoice: s.requireChoice,
-				accentColor: s.accentColor,
-				rule,
-				scripts: buildScripts(s.services as any[]),
-				legalLinks: { privacy: s.privacyUrl, cookies: s.cookieUrl, terms: s.imprintUrl },
+				bannerPosition: s.bannerPosition,
+				accentColor: s.accentColor || undefined,
+				rule: buildPolicyRule({
+					policyVersion: s.policyVersion,
+					cookieMaxAgeMonths: s.cookieMaxAgeMonths,
+				}),
+				services: s.services,
+				clearOnRevocation: buildClearOnRevocation(s.services),
+				legalLinks: { privacy: s.privacyUrl, imprint: s.imprintUrl, cookies: s.cookieUrl },
+				// policy pages show no banner (text stays readable); the reopen button still shows
+				hidePrompt: isPolicyPage(event.page?.path ?? "", policyUrls),
 				policyVersion: s.policyVersion,
 				bannerVersion: BANNER_VERSION,
-				nonce: event.page?.cspNonce, // threaded if the host exposes one (verify)
 			};
 
-			const nonceAttr = config.nonce ? { nonce: config.nonce } : undefined;
 			const fragments: PageFragmentContribution[] = [
 				{
 					// Config + loader in head. The loader imports the bundle from
@@ -266,8 +282,7 @@ export const privacyHooks = {
 					// when it is already cached, which is exactly the waste we removed.
 					kind: "inline-script",
 					placement: "head",
-					code: `window.__emdashPrivacy=${JSON.stringify(config)};`,
-					attributes: nonceAttr,
+					code: `window.__emdashPrivacy=${safeInlineJson(config)};`,
 					key: "emdash-privacy-config",
 				},
 				{
@@ -278,7 +293,6 @@ export const privacyHooks = {
 					kind: "inline-script",
 					placement: "body:end",
 					code: LOADER,
-					attributes: nonceAttr,
 					key: "emdash-privacy-js",
 				},
 			];

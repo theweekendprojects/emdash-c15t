@@ -7,7 +7,6 @@
 import assert from "node:assert/strict";
 import { offline } from "@c15t/browser";
 import { retentionCutoff, purgeDue, DAY_MS } from "./purge.js";
-import { resolveLanguage } from "./shared.js";
 import { buildPolicyRule, monthsToDays, OPTIONAL_C15T_CATEGORIES } from "./rule.js";
 
 async function resolve(rule: unknown, country?: string) {
@@ -68,13 +67,5 @@ assert.equal(purgeDue(undefined, NOW), true, "no state -> due");
 assert.equal(purgeDue({ at: NOW - 1000 }, NOW), false, "ran a second ago -> not due");
 assert.equal(purgeDue({ at: NOW - DAY_MS }, NOW), true, "ran a day ago -> due");
 assert.equal(purgeDue({ at: "x" }, NOW), true, "garbage state -> due (fail toward purging)");
-
-// --- banner language ---
-assert.equal(resolveLanguage("en", "de"), "en", "operator setting wins");
-assert.equal(resolveLanguage("de", "en-GB"), "de", "operator setting wins (de)");
-assert.equal(resolveLanguage("auto", "en-GB"), "en", "page locale en");
-assert.equal(resolveLanguage("auto", null), "de", "no page locale -> German-market default");
-assert.equal(resolveLanguage("auto", "fr"), "de", "non-English page locale -> German");
-assert.equal(resolveLanguage(undefined, "EN"), "en", "case-insensitive");
 
 console.log("rule.selfcheck: OK");

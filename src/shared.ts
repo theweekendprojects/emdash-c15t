@@ -1,8 +1,9 @@
 /**
  * Constants shared by the descriptor (`index.ts`) and the runtime. Kept
- * dependency-free (type-only emdash import) so the self-check can import it.
+ * dependency-free (type-only emdash import) so the self-checks can import it.
  */
 import type { SettingField } from "emdash";
+import { BANNER_POSITIONS } from "./presentation.js";
 
 /** Plugin id. Also the storage namespace and the public route prefix. */
 export const PLUGIN_ID = "emdash-privacy";
@@ -11,7 +12,7 @@ export const PLUGIN_ID = "emdash-privacy";
  * Banner asset version. Bump when the shipped `dist/banner.js` changes so the
  * immutable-cached asset URL busts. Independent of the per-site policy version.
  */
-export const BANNER_VERSION = "1";
+export const BANNER_VERSION = "2";
 
 /** The three consent categories this plugin offers. `necessary` is always on. */
 export const CATEGORIES = ["necessary", "analytics", "marketing"] as const;
@@ -40,17 +41,19 @@ export const SETTINGS_SCHEMA = {
 		multiline: true,
 		label: "Tracked services (JSON)",
 		description:
-			'JSON array: [{"id","name","category":"analytics"|"marketing","provider","purpose","src"}]. The banner only shows when this is non-empty.',
+			'JSON array. Preset: {"id","name","category":"analytics"|"marketing","preset":"google-tag","options":{"id":"G-XXXX"}}. Custom: {"id","name","category","src":"https://..."}. Optional "cookies" lists cookies to delete on withdrawal. The banner only shows when this is non-empty.',
+	},
+	allowedScriptHosts: {
+		type: "string",
+		label: "Allowed script hosts (optional)",
+		description:
+			"Comma-separated domains. When set, custom script src must be on these domains or their subdomains.",
 	},
 	language: {
-		type: "select",
+		type: "string",
 		label: "Banner language",
-		description: "Auto follows the page locale. German is used for anything that is not English.",
-		options: [
-			{ value: "auto", label: "Auto (page / site locale)" },
-			{ value: "de", label: "Deutsch" },
-			{ value: "en", label: "English" },
-		],
+		description:
+			"'auto' follows the page language. Or a language code, e.g. de, en, fr. Unsupported languages show German.",
 	},
 	colorScheme: {
 		type: "select",
@@ -60,6 +63,12 @@ export const SETTINGS_SCHEMA = {
 			{ value: "light", label: "Light" },
 			{ value: "dark", label: "Dark" },
 		],
+	},
+	bannerPosition: {
+		type: "select",
+		label: "Banner position",
+		description: "Where the banner appears. Ignored while 'Require a choice' is on (the wall is centred).",
+		options: BANNER_POSITIONS.map((value) => ({ value, label: value })),
 	},
 	accentColor: { type: "string", label: "Accent color (CSS color)" },
 	requireChoice: {
@@ -88,21 +97,12 @@ export const SETTINGS_SCHEMA = {
 export const SETTINGS_DEFAULTS = {
 	enabled: true,
 	services: "[]",
+	allowedScriptHosts: "",
 	colorScheme: "system" as const,
-	language: "auto" as const,
+	language: "auto",
+	bannerPosition: "bottom-left",
 	requireChoice: false,
 	policyVersion: "1",
 	cookieMaxAgeMonths: 12,
 	retentionMonths: 36,
 };
-
-/**
- * Banner language. The operator setting wins; "auto" follows the PAGE locale
- * (event.page.locale). We deliberately do not fall back to the site locale:
- * EmDash reports "en" for it even when nobody configured one, which would flip
- * a German-market site to English. Anything that is not English gets German.
- */
-export function resolveLanguage(setting: unknown, pageLocale: unknown): "de" | "en" {
-	if (setting === "de" || setting === "en") return setting;
-	return typeof pageLocale === "string" && pageLocale.toLowerCase().startsWith("en") ? "en" : "de";
-}

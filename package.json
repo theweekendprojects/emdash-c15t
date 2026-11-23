@@ -43,9 +43,9 @@
       "import": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./sandbox": {
-      "import": "./src/sandbox-entry.ts",
-      "default": "./src/sandbox-entry.ts"
+    "./embed": {
+      "import": "./src/components/ConsentEmbed.astro",
+      "default": "./src/components/ConsentEmbed.astro"
     }
   },
   "files": [
@@ -58,7 +58,10 @@
     "emdash": ">=0.30.0"
   },
   "dependencies": {
-    "@c15t/browser": "3.0.0"
+    "@c15t/browser": "3.0.0",
+    "@c15t/core": "3.0.0",
+    "@c15t/integrations": "3.0.0",
+    "@c15t/translations": "3.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

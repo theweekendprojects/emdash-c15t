@@ -24,3 +24,31 @@ First usable release. Verified end to end on a live EmDash site (Cloudflare Work
 
 Known limits: cron hook unreliable on the tested host; strict CSP needs `script-src blob:`; tenant
 isolation depends on the platform's plugin-storage isolation and was not exercised on a multi-site host.
+
+## Unreleased
+Implements the gap plan in `docs/consent-feature-plan.md`. Reuses the official c15t APIs and integrations.
+- **Cookie cleanup on withdrawal** (`clearOnRevocation`). Presets carry their known cookies, and entries can
+  list their own.
+- **Vendor presets** from `@c15t/integrations` (Google tag, GTM, Clarity, Plausible, Umami, Matomo, Fathom,
+  Cloudflare Web Analytics, Meta Pixel, Hotjar). Google tag uses `loadMode: 'after-consent'`.
+  Google's hand-written Consent Mode bridge is removed, because the helper does it. A pasted gtag.js URL is
+  upgraded to the preset.
+- **Microsoft UET is not offered as a preset**: its helper loads before consent.
+- **Script URL validation**: https only, no credentials, public hostname, default port. Optional
+  allowed-host list. Invalid service entries block saving.
+- **Same-origin check** on the public `save` route. Cross-origin requests get 403.
+- **Policy pages** (privacy, imprint, cookie) show no banner. The reopen button stays.
+- **Banner position** setting (floating corners, top/bottom bar; the wall stays centred).
+- **Languages**: `auto` or a code. Bundled languages are German and English; anything else falls back to German.
+  The old rule "anything not English gets German" is now "anything not bundled gets German". Add languages in
+  `src/client/languages.ts`.
+- **Embed component** `emdash-privacy/embed` (`ConsentEmbed.astro`): YouTube and Vimeo that wait for consent.
+- **CSV export** of consent records, admin only, with formula-injection escaping.
+- **Public API** documented: `window.emdashPrivacy` (c15t client methods).
+- **Fixes**: legal links used the wrong c15t keys and never rendered; `scrollLock` replaced by
+  `presentation.prompt.blocking`; a service's `provider` and `purpose` are kept for the public route;
+  `__emdashPrivacy` config is escaped for inline `<script>` (a `</script>` in an admin-set name could break out);
+  the `./sandbox` export pointed at a missing file and is removed.
+- Not implemented: in-code rate limiting. The plugin context has no Worker bindings, so the README gives a
+  Cloudflare rate-limiting rule instead.
+- Bundle: about 405 KB minified (was 379 KB), from the vendor helpers.
