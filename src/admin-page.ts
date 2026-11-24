@@ -100,6 +100,10 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 				items: [{ label: "Consent records stored", value: String(total) }],
 			},
 			{
+				type: "context",
+				text: `Export consent records (CSV): create an API token with the admin scope in EmDash, then run: curl -H "Authorization: Bearer <your ec_pat_ token>" -o consent-export.csv ${exportUrl}`,
+			},
+			{
 				type: "form",
 				block_id: "privacy_settings",
 				fields: [
@@ -182,7 +186,6 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 			{
 				type: "actions",
 				elements: [
-					{ type: "link", label: "Download consent records (CSV)", target: { kind: "external", url: exportUrl } },
 					{
 						type: "button",
 						label: "Delete expired records now",

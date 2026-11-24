@@ -201,16 +201,14 @@ describe("admin route", () => {
 		expect([sub.status, anon.status]).toEqual([403, 401]);
 	});
 
-	it("renders the settings page with a CSV download link that is an absolute URL", async () => {
+	it("renders CSV export instructions with the absolute export URL and a Bearer example", async () => {
 		const res = await adminCall(runtime, { type: "page_load" });
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { data: { blocks: Array<Record<string, any>> } };
-		const actions = body.data.blocks.find((b) => b.type === "actions");
-		const link = actions?.elements.find((e: { type: string }) => e.type === "link");
-		expect(link?.target).toEqual({
-			kind: "external",
-			url: `${SITE}/_emdash/api/plugins/emdash-privacy/consent-export`,
-		});
+		const text = body.data.blocks.filter((b) => b.type === "context").map((b) => String(b.text)).join("\n");
+		expect(text).toContain(`${SITE}/_emdash/api/plugins/emdash-privacy/consent-export`);
+		expect(text).toContain('Authorization: Bearer');
+		expect(body.data.blocks.some((b) => b.type === "link")).toBe(false);
 	});
 
 	it("rejects invalid services and keeps the previous configuration", async () => {
@@ -277,6 +275,8 @@ describe("CSV export", () => {
 		expect(res.headers.get("content-type")).toMatch(/text\/csv/);
 		expect(res.headers.get("content-disposition")).toBe('attachment; filename="consent-export.csv"');
 		expect(res.headers.get("cache-control")).toBe("private, no-store");
+		// The route sets nosniff, and it reaches the client unchanged. Checked by running the route, not by reading source.
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
 		const text = await res.text();
 		expect(text.split("\r\n")[0]).toBe(
 			'"createdAt","policyVersion","bannerVersion","action","necessary","measurement","marketing","subjectId"',
@@ -289,13 +289,23 @@ describe("CSV export", () => {
 		expect([sub.status, anon.status]).toEqual([403, 401]);
 	});
 
-	// KNOWN ISSUE (see docs/consent-feature-plan.md): EmDash rejects private plugin routes that lack
-	// `X-EmDash-Request: 1`, and a plain download link cannot send it. This test pins the current
-	// behaviour. When the download is redesigned, change this test to the new contract.
-	it("KNOWN ISSUE: a download without X-EmDash-Request is refused with CSRF_REJECTED", async () => {
+	it("an API token with the admin scope can download without the CSRF header", async () => {
+		await call(runtime, "save", { method: "POST", body: savePayload(), headers: SAME_ORIGIN });
+		const res = await call(runtime, "consent-export", { user: ADMIN, tokenScopes: ["admin"] });
+		expect(res.status).toBe(200);
+		expect((await res.text()).trim().split("\r\n")).toHaveLength(2);
+	});
+
+	it("an API token without the admin scope is refused", async () => {
+		const res = await call(runtime, "consent-export", { user: ADMIN, tokenScopes: ["content:read"] });
+		expect(res.status).toBe(403);
+		expect(((await res.json()) as { error: { code: string } }).error.code).toBe("INSUFFICIENT_SCOPE");
+	});
+
+	it("refuses a browser-style download without the CSRF header (EmDash enforces this on private routes)", async () => {
 		const res = await call(runtime, "consent-export", { user: ADMIN });
 		expect(res.status).toBe(403);
-		expect((await res.json() as { error: { code: string } }).error.code).toBe("CSRF_REJECTED");
+		expect(((await res.json()) as { error: { code: string } }).error.code).toBe("CSRF_REJECTED");
 	});
 });
 

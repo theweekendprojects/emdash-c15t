@@ -55,6 +55,8 @@ interface CallOptions {
 	body?: unknown;
 	headers?: Record<string, string>;
 	user?: typeof ADMIN | typeof SUBSCRIBER | null;
+	/** Set for a request authenticated by an API token (Bearer), as EmDash's auth middleware does. */
+	tokenScopes?: string[];
 }
 
 /** Calls a plugin route through EmDash's dispatcher, the same path a browser request takes. */
@@ -76,6 +78,7 @@ export function call(runtime: Runtime, route: string, options: CallOptions = {})
 		path: `/${route}`,
 		request,
 		user: options.user === undefined ? undefined : (options.user as never),
+		tokenScopes: options.tokenScopes as never,
 	}) as Promise<Response>;
 }
 

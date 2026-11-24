@@ -26,6 +26,13 @@ Known limits: cron hook unreliable on the tested host; strict CSP needs `script-
 isolation depends on the platform's plugin-storage isolation and was not exercised on a multi-site host.
 
 ## Unreleased
+- **CSV export** is now a command-line step with an API token that has the `admin` scope (`curl` with
+  `Authorization: Bearer ec_pat_...`). The admin page shows the URL. The broken browser download link is removed. A plain
+  browser request without a token is refused with 403 `CSRF_REJECTED`, as EmDash enforces.
+- **Browser tests**: a headless Chromium drives the real banner against the real runtime. It checks no vendor request before
+  a choice, accept loads them and stores one record, reject loads none and persists, the fallback language, and that
+  policy pages show no banner. External requests are intercepted.
+- **Embed test**: `ConsentEmbed` is built with Astro in a fixture, and the output is checked.
 - **Tests**: 33 integration tests on the real EmDash runtime (`npm test`): save (same-origin, forged origin, strict
   schema, grants), services, admin validation and warnings, CSV export (auth, paging over 250 rows), page injection
   (escaping, policy page, disabled), retention (lazy and admin purge over 250 rows). A GitHub Actions workflow runs

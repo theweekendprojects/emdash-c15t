@@ -8,3 +8,4 @@ src/assets.generated.ts
 .dev.vars
 # npm pack output
 *.tgz
+.astro/

@@ -194,10 +194,25 @@ the consent mechanism itself; have a lawyer confirm.
 
 ## Consent records (CSV export)
 
-Admin → Plugins → Privacy → **Download consent records (CSV)**. The download is an admin-only route
-(`plugins:manage`). Columns: `createdAt`, `policyVersion`, `bannerVersion`, `action`, `necessary`,
-`measurement`, `marketing`, `subjectId`. Every cell is quoted, and a cell that starts like a spreadsheet
-formula gets a leading `'`, so it opens as text. The file is built in memory. Very large histories would need a streaming route, which EmDash's current plugin response type does not offer.
+The admin page shows how many records are stored. To export them, use an API token. EmDash's admin
+routes accept a browser session or a token, and a plain browser link cannot send the header EmDash requires
+for session requests, so the export is a command-line step.
+
+1. In EmDash, create an API token with the `admin` scope. Its value starts with `ec_pat_`.
+2. Download the file:
+
+```bash
+curl -H "Authorization: Bearer ec_pat_..." \
+  -o consent-export.csv \
+  https://your-site.example/_emdash/api/plugins/emdash-privacy/consent-export
+```
+
+The admin page shows this URL for your site. The file has one row per record. Columns: `createdAt`,
+`policyVersion`, `bannerVersion`, `action`, `necessary`, `measurement`, `marketing`, `subjectId`. Every cell
+is quoted, and a cell that starts like a spreadsheet formula gets a leading `'`, so it opens as text. The
+response is built in memory, which suits the size of a typical consent history.
+
+A token without the `admin` scope gets `403 INSUFFICIENT_SCOPE`. Revoke the token once the export is done.
 
 ## Public JavaScript API
 
@@ -226,14 +241,16 @@ Requires Node 22.16 or newer (the integration tests use `node:sqlite`).
 
 ```bash
 npm install --legacy-peer-deps   # --legacy-peer-deps: npm's peer resolver fails on vitest's optional browser peers
-npm test                         # integration tests: the real EmDash runtime + in-memory SQLite (tests/)
+npx playwright-core install chromium   # once, for the browser tests
+npm test                         # all integration tests (tests/): the real EmDash runtime, in-memory SQLite,
+                                 #   a headless browser on the real banner, and an Astro build of ConsentEmbed
 npm run selfcheck                # unit checks: policy rule through c15t's engine, validation, same-origin, CSV, layout, language
 npm run typecheck                # tsc over src/
 npm run build:client             # bundles the banner into src/assets.generated.ts (also runs on npm pack)
 ```
 
-The integration tests run each route through EmDash's own dispatcher, so auth, CSRF and status codes are the real ones.
-A browser check of the bundle is still manual: load the built `dist/banner.js` in a page with `window.__emdashPrivacy` set.
+The browser tests need `dist/banner.js` (run `npm run build:client` first). To use an existing Chromium
+instead of the one Playwright installs, set `CHROMIUM_PATH`.
 
 ## Operating notes
 

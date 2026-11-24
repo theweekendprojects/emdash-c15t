@@ -21,6 +21,8 @@ jobs:
       # (npm error "Cannot read properties of null (reading 'edgesOut')"). See README, Development.
       - run: npm ci --legacy-peer-deps
       - run: npm run build:client
+      # Chromium for the browser tests (tests/browser.test.ts), with the system libraries it needs on Linux.
+      - run: npx playwright-core install --with-deps chromium
       - run: npm run typecheck
       - run: npm run selfcheck
       - run: npm test
