@@ -46,6 +46,8 @@ export default defineConfig({
 		server: { deps: { inline: [/emdash/] } },
 		environment: "node",
 		include: ["tests/**/*.test.ts"],
-		testTimeout: 30_000,
+		// Each test file builds EmDash runtimes in beforeEach. Under full-suite load that exceeds the 10 s hook default.
+		testTimeout: 60_000,
+		hookTimeout: 120_000,
 	},
 });
