@@ -26,6 +26,14 @@ Known limits: cron hook unreliable on the tested host; strict CSP needs `script-
 isolation depends on the platform's plugin-storage isolation and was not exercised on a multi-site host.
 
 ## Unreleased
+- **Tests**: 33 integration tests on the real EmDash runtime (`npm test`): save (same-origin, forged origin, strict
+  schema, grants), services, admin validation and warnings, CSV export (auth, paging over 250 rows), page injection
+  (escaping, policy page, disabled), retention (lazy and admin purge over 250 rows). A GitHub Actions workflow runs
+  build, typecheck, self-checks and tests.
+- **Dependencies**: `zod` is a runtime dependency (pinned). The `@c15t/*` packages are build-time only and moved to
+  `devDependencies`. The published package no longer requires them.
+- **Admin**: a warning banner appears when stored tracked-services config is invalid, instead of the banner silently vanishing.
+- The published tarball no longer includes the self-check files.
 - **Renamed the npm package** from `emdash-privacy` to `emdash-c15t`. The plugin id (`emdash-privacy`), routes and
   stored data are unchanged, so existing sites need no change. `emdash-privacy@0.1.0` stays on npm and should be deprecated.
 Implements the gap plan in `docs/consent-feature-plan.md`. Reuses the official c15t APIs and integrations.

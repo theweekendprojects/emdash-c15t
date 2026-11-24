@@ -72,11 +72,25 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 	};
 	const siteId = siteHost(ctx);
 	const total = await ctx.storage.consents.count({ siteId });
+	// Stored config can still be invalid (saved before a validation rule existed, or edited in the DB).
+	// The runtime drops bad entries, so say so here rather than let the banner vanish silently.
+	const stored = parseServices(v.services, parseAllowedHosts(v.allowedScriptHosts).hosts);
+	const storedWarning = stored.errors.length
+		? [
+				{
+					type: "banner",
+					variant: "error",
+					title: "Some tracked services are invalid and are ignored",
+					description: `${stored.errors.length} problem(s), first: ${stored.errors[0]}. Fix them below and save.`,
+				},
+			]
+		: [];
 	const exportUrl = absoluteUrl(ctx, EXPORT_PATH);
 
 	return {
 		blocks: [
 			{ type: "header", text: "Privacy & cookie consent" },
+			...storedWarning,
 			{
 				type: "context",
 				text: "Consent mechanism built to meet GDPR/TDDDG requirements. Not legal advice - have the result reviewed by a lawyer. The banner only shows when at least one service is listed.",

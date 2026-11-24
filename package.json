@@ -34,7 +34,9 @@
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
     "selfcheck": "bash scripts/selfcheck.sh",
-    "prepack": "npm run build:client"
+    "prepack": "npm run build:client",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -59,15 +61,21 @@
     "emdash": ">=0.30.0"
   },
   "dependencies": {
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@astrojs/react": "7.1.9",
     "@c15t/browser": "3.0.0",
     "@c15t/core": "3.0.0",
     "@c15t/integrations": "3.0.0",
-    "@c15t/translations": "3.0.0"
-  },
-  "devDependencies": {
+    "@c15t/translations": "3.0.0",
     "@types/node": "^22.0.0",
+    "astro": "7.3.2",
+    "emdash": "1.2.0",
     "esbuild": "^0.24.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "typescript": "^5.7.0",
-    "zod": "^4.4.3"
+    "vitest": "4.1.10"
   }
 }

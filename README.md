@@ -222,12 +222,18 @@ Note: `window.c15t` is c15t's debug object, not the API. Use `window.emdashPriva
 
 ## Development
 
+Requires Node 22.16 or newer (the integration tests use `node:sqlite`).
+
 ```bash
-npm install
-npm run selfcheck      # policy rule resolved by c15t's real engine; service, security, CSV, layout, language checks
-npm run build:client   # bundles the banner into src/assets.generated.ts (also runs on npm pack)
-npx tsc --noEmit
+npm install --legacy-peer-deps   # --legacy-peer-deps: npm's peer resolver fails on vitest's optional browser peers
+npm test                         # integration tests: the real EmDash runtime + in-memory SQLite (tests/)
+npm run selfcheck                # unit checks: policy rule through c15t's engine, validation, same-origin, CSV, layout, language
+npm run typecheck                # tsc over src/
+npm run build:client             # bundles the banner into src/assets.generated.ts (also runs on npm pack)
 ```
+
+The integration tests run each route through EmDash's own dispatcher, so auth, CSRF and status codes are the real ones.
+A browser check of the bundle is still manual: load the built `dist/banner.js` in a page with `window.__emdashPrivacy` set.
 
 ## Operating notes
 

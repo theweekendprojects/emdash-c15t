@@ -3,7 +3,7 @@
  *
  * The server only works out a candidate code (the operator's setting, or the page
  * locale). The browser picks the language, because it knows which translations are
- * bundled (`@c15t/translations/all`). An unsupported language falls back to German,
+ * bundled (`src/client/languages.ts`). An unsupported language falls back to German,
  * the default for this plugin's German-market baseline.
  */
 

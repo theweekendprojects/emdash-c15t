@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # node:sqlite (used by the integration tests) needs Node 22.5+; EmDash requires >=22.16.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      # --legacy-peer-deps: npm's peer resolver fails on vitest's optional browser peers
+      # (npm error "Cannot read properties of null (reading 'edgesOut')"). See README, Development.
+      - run: npm ci --legacy-peer-deps
+      - run: npm run build:client
+      - run: npm run typecheck
+      - run: npm run selfcheck
+      - run: npm test
