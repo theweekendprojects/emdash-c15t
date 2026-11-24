@@ -49,15 +49,23 @@ export function triggerPosition(position: string): "bottom-left" | "bottom-right
 /**
  * True when the request path is one of the configured policy pages (privacy,
  * cookie, imprint). Those pages show no banner, so the text stays readable. The
- * reopen button still shows. Absolute and relative URLs both work.
+ * reopen button still shows.
+ *
+ * A relative URL (`/datenschutz`) always means this site. An absolute URL counts only when its host is `host` (the
+ * host of the page being rendered): a policy hosted elsewhere must not hide the banner on this site's own page that
+ * happens to share the path. With no `host` given, the path alone decides.
  */
-export function isPolicyPage(path: string, policyUrls: ReadonlyArray<string | undefined>): boolean {
+export function isPolicyPage(path: string, policyUrls: ReadonlyArray<string | undefined>, host?: string): boolean {
 	const norm = (p: string) => (p.length > 1 ? p.replace(/\/+$/, "") : p) || "/";
 	const current = norm(path);
 	return policyUrls.some((u) => {
 		if (typeof u !== "string" || !u.trim()) return false;
 		try {
-			return norm(new URL(u.trim(), "https://policy.invalid").pathname) === current;
+			const raw = u.trim();
+			const url = new URL(raw, "https://policy.invalid");
+			const absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
+			if (absolute && host !== undefined && url.hostname.toLowerCase() !== host.toLowerCase()) return false;
+			return norm(url.pathname) === current;
 		} catch {
 			return false;
 		}

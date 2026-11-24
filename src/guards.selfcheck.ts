@@ -11,6 +11,8 @@ import { isPolicyPage, promptFor, triggerPosition } from "./presentation.js";
 import { languageCandidate, isLanguageSetting, pickLocale } from "./locale.js";
 import { embedUrl } from "./embed-url.js";
 import { PACKAGE_NAME, PLUGIN_ID } from "./shared.js";
+import { parseExportRange, parseInstant, rangeWhere } from "./export-range.js";
+import { siteIdFrom } from "./site-id.js";
 import { readFileSync } from "node:fs";
 
 const ok = (raw: unknown, hosts: string[] = []) => {
@@ -162,7 +164,7 @@ for (const f of ["=HYPERLINK(1)", "+1", "-2", "@SUM", "\t=x", "  =x", "\r=x"]) {
 	assert.ok(csvCell(f).startsWith(`"'`), `formula-like "${JSON.stringify(f)}" is prefixed`);
 }
 assert.equal(csvCell("normal text"), '"normal text"', "no prefix for normal text");
-assert.equal(csvHeaderLine(), '"createdAt","policyVersion","bannerVersion","action","necessary","measurement","marketing","subjectId"');
+assert.equal(csvHeaderLine(), '"createdAt","policyVersion","bannerVersion","action","necessary","measurement","marketing","subjectId","siteId"');
 
 const line = consentCsvLine({
 	ts: Date.UTC(2026, 10, 23, 12, 0, 0),
@@ -171,8 +173,11 @@ const line = consentCsvLine({
 	action: "custom",
 	grants: { necessary: true, measurement: true, marketing: false },
 	subjectId: "abc",
+	siteId: "a.example",
 });
-assert.equal(line, '"2026-11-23T12:00:00.000Z","3","2","custom","true","true","false","abc"');
+assert.equal(line, '"2026-11-23T12:00:00.000Z","3","2","custom","true","true","false","abc","a.example"');
+assert.ok(consentCsvLine({ ts: 0, policyVersion: "1", bannerVersion: "1", action: "all", grants: {}, subjectId: "s" }).endsWith(',""'), "a record without siteId exports an empty cell");
+assert.ok(consentCsvLine({ ts: 0, policyVersion: "1", bannerVersion: "1", action: "all", grants: {}, subjectId: "s", siteId: "=cmd" }).endsWith(`,"'=cmd"`), "siteId is escaped like every other cell");
 assert.equal(consentCsvLine({ ts: Number.NaN, policyVersion: "1", bannerVersion: "1", action: "all", grants: {}, subjectId: "s" }).startsWith('"",'), true, "bad timestamp -> empty date");
 assert.ok(consentCsvLine({ ts: 1e20, policyVersion: "1", bannerVersion: "1", action: "all", grants: {}, subjectId: "s" }).startsWith('"",'), "out-of-range timestamp does not throw");
 assert.ok(consentCsvLine({ ts: 0, policyVersion: "1", bannerVersion: "1", action: "all", grants: {}, subjectId: "s" }).includes('"false","false","false"'), "missing grants are false");
@@ -210,6 +215,14 @@ assert.equal(isPolicyPage("/", POLICY), false, "home is not a policy page");
 assert.equal(isPolicyPage("/datenschutz/x", POLICY), false, "sub-path is not the policy page");
 assert.equal(isPolicyPage("/x", [undefined, ""]), false, "no configured URLs -> never a policy page");
 assert.equal(isPolicyPage("/", ["/"]), true, "root policy page works");
+// An absolute policy URL on another host is not this site's page, even when the path is the same.
+assert.equal(isPolicyPage("/privacy", ["https://policies.example.com/privacy"], "shop.example"), false, "other host, same path: not a policy page here");
+assert.equal(isPolicyPage("/privacy", ["https://shop.example/privacy"], "shop.example"), true, "same host: matches");
+assert.equal(isPolicyPage("/privacy", ["https://SHOP.example/privacy"], "shop.example"), true, "host comparison ignores case");
+assert.equal(isPolicyPage("/privacy", ["/privacy"], "shop.example"), true, "a relative URL is always this host");
+assert.equal(isPolicyPage("/privacy", ["https://shop.example:8443/privacy"], "shop.example"), true, "a port does not change the hostname");
+assert.equal(isPolicyPage("/privacy", ["https://www.shop.example/privacy"], "shop.example"), false, "www is a different host");
+assert.equal(isPolicyPage("/privacy", ["https://policies.example.com/privacy"]), true, "no host given: path only, as before");
 
 // --- language ---
 assert.equal(languageCandidate("auto", "en-GB"), "en", "auto follows the page");
@@ -239,5 +252,33 @@ assert.equal(embedUrl("vimeo", "123456789"), "https://player.vimeo.com/video/123
 assert.equal(embedUrl("vimeo", "../../evil"), null, "no path traversal");
 assert.equal(embedUrl("dailymotion", "x1"), null, "unknown provider rejected");
 assert.equal(embedUrl("youtube", undefined), null, "missing ID rejected");
+
+// --- export range ---
+assert.equal(parseInstant("2026-01-01"), Date.UTC(2026, 0, 1), "a plain date is midnight UTC");
+assert.equal(parseInstant("2026-01-01T12:30:00Z"), Date.UTC(2026, 0, 1, 12, 30), "date-time with Z");
+assert.equal(parseInstant("2026-01-01T12:30:00+02:00"), Date.UTC(2026, 0, 1, 10, 30), "offset is applied");
+assert.equal(parseInstant("2026-01-01 12:30"), Date.UTC(2026, 0, 1, 12, 30), "space separator, no zone means UTC");
+for (const bad of ["not-a-date", "2026-13-45", "2026-02-30", "2026/01/01", "01-01-2026", "", "1795553603272", "tomorrow"]) {
+	assert.equal(parseInstant(bad), null, `${JSON.stringify(bad)} is not an instant`);
+}
+const q = (s: string) => new URLSearchParams(s);
+assert.deepEqual(parseExportRange(q("")), {}, "no range = everything");
+assert.deepEqual(parseExportRange(q("from=2026-01-01&to=2026-02-01")), { from: Date.UTC(2026, 0, 1), to: Date.UTC(2026, 1, 1) });
+assert.equal(typeof parseExportRange(q("from=junk")), "string", "a bad from is an error, not ignored");
+assert.equal(typeof parseExportRange(q("to=2026-13-45")), "string", "an impossible date is an error");
+assert.equal(typeof parseExportRange(q("from=2026-02-01&to=2026-01-01")), "string", "from after to is an error");
+assert.equal(typeof parseExportRange(q("from=2026-01-01&to=2026-01-01")), "string", "an empty range is an error");
+assert.deepEqual(rangeWhere({}), {}, "no range = no filter");
+assert.deepEqual(rangeWhere({ from: 5 }), { ts: { gte: 5 } });
+assert.deepEqual(rangeWhere({ to: 9 }), { ts: { lt: 9 } });
+assert.deepEqual(rangeWhere({ from: 5, to: 9 }), { ts: { gte: 5, lt: 9 } }, "from is inclusive, to is exclusive");
+
+// --- site id ---
+assert.equal(siteIdFrom("https://a.example/path", "https://b.example/x"), "a.example", "the site URL wins");
+assert.equal(siteIdFrom("", "https://b.example/x"), "b.example", "an empty site URL falls back to the request host");
+assert.equal(siteIdFrom(undefined, "https://b.example/x"), "b.example", "a missing site URL falls back too");
+assert.equal(siteIdFrom("not a url", "https://b.example/x"), "b.example", "an unparseable site URL falls back");
+assert.equal(siteIdFrom("", ""), "unknown", "nothing to go on");
+assert.equal(siteIdFrom(undefined, undefined), "unknown");
 
 console.log("guards.selfcheck: OK");

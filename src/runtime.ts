@@ -19,8 +19,9 @@ import { adminRoute } from "./admin-page.js";
 import { readAllSettings } from "./settings.js";
 import { siteIdFrom } from "./site-id.js";
 import { consentCsvLine, csvHeaderLine, type ConsentRecord } from "./export.js";
+import { parseExportRange, rangeWhere } from "./export-range.js";
 import { isSameOriginRequest, safeInlineJson } from "./security.js";
-import { LAZY_PURGE_MAX_PAGES, purgeDue, purgeExpired } from "./purge.js";
+import { LAZY_PURGE_MAX_PAGES, PURGE_PAGE_SIZE, purgeDue, purgeExpired } from "./purge.js";
 import { isPolicyPage } from "./presentation.js";
 import { languageCandidate } from "./locale.js";
 import { buildPolicyRule } from "./rule.js";
@@ -32,6 +33,12 @@ import { BANNER_VERSION, PLUGIN_ID, SETTINGS_DEFAULTS } from "./shared.js";
 const BUNDLE_ROUTE = `assets/banner-${BANNER_HASH}`;
 const BUNDLE_URL = `/_emdash/api/plugins/${PLUGIN_ID}/${BUNDLE_ROUTE}`;
 const EXPORT_ROUTE = "consent-export";
+
+/**
+ * EmDash rejects a raw plugin response over 8 MiB (PLUGIN_ROUTE_MAX_BODY_BYTES). Stay under it with a margin, because the
+ * count here is characters and the body is UTF-8 bytes. Test-only override: see tests/review.test.ts.
+ */
+const EXPORT_MAX_BYTES = 7 * 1024 * 1024;
 
 /**
  * Tiny inline loader. The ~370 KB bundle is NOT inlined per page. It is cached
@@ -118,6 +125,15 @@ async function loadSettings(ctx: PluginContext) {
 
 // ── host-derived site id (never trust the payload) ────────────────────────────
 
+/** The hostname of the page being rendered, or undefined when the page URL is missing or not a URL. */
+function hostOf(url: string | undefined): string | undefined {
+	try {
+		return url ? new URL(url).hostname : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function siteIdFromCtx(ctx: { site?: { url?: string }; request?: { url?: string } }): string {
 	return siteIdFrom(ctx.site?.url, ctx.request?.url);
 }
@@ -162,23 +178,40 @@ export const consentRoutes = {
 	// Block Kit settings page behind the sidebar link (admin-session gated)
 	admin: adminRoute,
 
-	// Consent proof as CSV. Private (admin session, plugins:manage), raw response so it downloads as a file.
+	// Consent proof as CSV. Private (admin session or an admin-scope API token), raw response so it downloads as a file.
+	// Everything in this plugin's storage is this site's: multi-site hosts give each site its own storage table, so the
+	// export is not filtered by siteId (a site reached through two hostnames would otherwise export only half its records).
 	[EXPORT_ROUTE]: {
 		response: "raw" as const,
 		handler: async (ctx: RouteContext) => {
-			const siteId = siteIdFromCtx(ctx);
+			const range = parseExportRange(new URL(ctx.request.url).searchParams);
+			if (typeof range === "string") throw PluginRouteError.badRequest(range);
 			const lines = [csvHeaderLine()];
+			let bytes = lines[0]!.length + 2;
 			let cursor: string | undefined;
-			// Page through the whole table. The response is built in memory (plugin responses are
-			// text or bytes, not a stream), so very large histories need a future streaming route.
+			// No orderBy: EmDash then pages in (created_at, id) order using the table's own index. A JSON orderBy defeats the
+			// index and made every page re-sort the whole history (7 000 rows took 13 s). Records are stored in arrival order,
+			// so this is chronological.
 			do {
-				const page = await ctx.storage.consents.query({
-					where: { siteId },
-					orderBy: { ts: "asc" },
-					limit: 100,
-					cursor,
-				});
-				for (const item of page.items) lines.push(consentCsvLine(item.data as ConsentRecord));
+				const page = await ctx.storage.consents.query({ where: rangeWhere(range), limit: PURGE_PAGE_SIZE, cursor });
+				for (const item of page.items) {
+					const line = consentCsvLine(item.data as ConsentRecord);
+					bytes += line.length + 2;
+					// EmDash refuses a raw response over 8 MiB. Fail clearly before building it, never return a shortened file.
+					if (bytes > EXPORT_MAX_BYTES) {
+						return pluginResponse({
+							status: 413,
+							headers: { "content-type": "text/plain; charset=utf-8" },
+							body: {
+								kind: "text",
+								value:
+									"This export is too large for one download. Export it in parts with from and to, for example " +
+									"?from=2026-01-01&to=2026-07-01 (from is included, to is not).\n",
+							},
+						});
+					}
+					lines.push(line);
+				}
 				cursor = page.hasMore ? page.cursor : undefined;
 			} while (cursor);
 			return pluginResponse({
@@ -303,7 +336,7 @@ export const privacyHooks = {
 				clearOnRevocation: buildClearOnRevocation(s.services),
 				legalLinks: { privacy: s.privacyUrl, imprint: s.imprintUrl, cookies: s.cookieUrl },
 				// policy pages show no banner (text stays readable); the reopen button still shows
-				hidePrompt: s.services.length === 0 || isPolicyPage(event.page?.path ?? "", policyUrls),
+				hidePrompt: s.services.length === 0 || isPolicyPage(event.page?.path ?? "", policyUrls, hostOf(event.page?.url)),
 				// The reopen button only makes sense when there is something to consent to.
 				showTrigger: s.services.length > 0,
 				policyVersion: s.policyVersion,

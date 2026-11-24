@@ -57,12 +57,16 @@ interface CallOptions {
 	user?: typeof ADMIN | typeof SUBSCRIBER | null;
 	/** Set for a request authenticated by an API token (Bearer), as EmDash's auth middleware does. */
 	tokenScopes?: string[];
+	/** The origin the request is addressed to. Defaults to SITE. A test uses it to simulate a second hostname. */
+	baseUrl?: string;
+	/** Query string for a GET, e.g. "from=2026-01-01". */
+	query?: string;
 }
 
 /** Calls a plugin route through EmDash's dispatcher, the same path a browser request takes. */
 export function call(runtime: Runtime, route: string, options: CallOptions = {}): Promise<Response> {
 	const method = options.method ?? "GET";
-	const url = `${SITE}/_emdash/api/plugins/${PLUGIN_ID}/${route}`;
+	const url = `${options.baseUrl ?? SITE}/_emdash/api/plugins/${PLUGIN_ID}/${route}${options.query ? `?${options.query}` : ""}`;
 	const hasBody = options.body !== undefined;
 	const request = new Request(url, {
 		method,

@@ -279,7 +279,7 @@ describe("CSV export", () => {
 		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
 		const text = await res.text();
 		expect(text.split("\r\n")[0]).toBe(
-			'"createdAt","policyVersion","bannerVersion","action","necessary","measurement","marketing","subjectId"',
+			'"createdAt","policyVersion","bannerVersion","action","necessary","measurement","marketing","subjectId","siteId"',
 		);
 	});
 

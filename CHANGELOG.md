@@ -35,10 +35,25 @@ so read the breaking notes first.
 - CSV export is a command-line step with an API token that has the `admin` scope. The old download link is removed.
   A browser request without a token gets `403 CSRF_REJECTED`, as EmDash enforces.
 - The admin page is the only settings editor. The auto-generated `settingsSchema` form is removed, because it skipped validation.
+- The CSV has a ninth column, `siteId`. Parsers that read by position are unaffected; a parser that checks the column count is not.
 - Retention and re-ask periods outside their range (1-120 and 1-36 months) are errors, not a silent default.
 - A `subjectId` must not be empty, and a save may carry at most 20 grant keys.
 - The peer range is `emdash >=1.2.0`. The package was previously declared `>=0.30.0`, which was never tested.
 - Development requires Node 22.23.4 or newer (Astro 7.4).
+
+**Found by the live test and the second review**
+- Every record was stored with `siteId: "unknown"` on hosts where `ctx.site.url` is empty (the multisite host is one).
+  The fallback used `??`, which does not fall through on an empty string. Fixed in one helper, `siteIdFrom()`.
+- The CSV export failed with a 500 for a history over roughly 50 000 to 65 000 records (EmDash's 8 MiB response limit; the file stops at 7 MiB). It now
+  answers 413 with instructions, and `from`/`to` export a history in parts.
+- The export and the purge were quadratic: `orderBy` on a JSON field re-sorted every match on each page (7 000 rows took
+  13 s, now 0.7 s). Neither orders by a JSON field now.
+- The export and the admin record count filtered by `siteId`. With the fix above, a site reached through two hostnames would
+  have shown only the records of the hostname you happened to call. They now cover all of the site's storage. The export
+  has a `siteId` column.
+- A policy URL on another host hid the banner on this site's page with the same path. Absolute URLs now have to match the host.
+- Tests: the loader's inline source is run in Node against fakes (no SubtleCrypto, storage that throws, a swapped bundle).
+  The published tarball was installed into a clean Astro project and `emdash-c15t/embed` built from `node_modules`.
 
 **Fixes**
 - Lazy purge: EmDash caps a query page at 100 rows. The purge asked for 200, and removed only 100 per run. It now
