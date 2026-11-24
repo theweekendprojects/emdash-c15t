@@ -3,7 +3,7 @@
  * content, so an editor cannot point an embed at an arbitrary host. Pure, self-checked.
  */
 
-export const EMBED_PROVIDERS = ["youtube", "vimeo"] as const;
+const EMBED_PROVIDERS = ["youtube", "vimeo"] as const;
 export type EmbedProvider = (typeof EMBED_PROVIDERS)[number];
 
 const PATTERNS: Record<EmbedProvider, RegExp> = {

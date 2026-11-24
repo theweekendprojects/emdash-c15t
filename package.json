@@ -1,6 +1,6 @@
 {
   "name": "emdash-c15t",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Per-site GDPR/TDDDG cookie consent for EmDash CMS: a themed, dark/light consent banner (DE/EN) that follows your site's design, with Google Consent Mode v2 and GPC, powered by c15t. Consent proof is stored in your own D1, no third-party backend.",
   "type": "module",
   "license": "MIT",
@@ -55,10 +55,11 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
+    "THIRD_PARTY_LICENSES.md",
     "!src/**/*.selfcheck.ts"
   ],
   "peerDependencies": {
-    "emdash": ">=0.30.0"
+    "emdash": ">=1.2.0"
   },
   "dependencies": {
     "zod": "4.6.7"
@@ -69,14 +70,14 @@
     "@c15t/core": "3.0.0",
     "@c15t/integrations": "3.0.0",
     "@c15t/translations": "3.0.0",
-    "@types/node": "^22.0.0",
-    "astro": "7.3.2",
-    "emdash": "1.2.0",
-    "esbuild": "^0.24.0",
+    "@types/node": "22.20.5",
+    "astro": "7.4.13",
+    "emdash": "1.6.0",
+    "esbuild": "0.28.2",
     "playwright-core": "1.56.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "typescript": "^5.7.0",
-    "vitest": "4.1.10"
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
   }
 }

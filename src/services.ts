@@ -12,8 +12,8 @@
  *     (the old format; a Google gtag URL is upgraded to the google-tag preset).
  */
 
-export const SERVICE_CATEGORIES = ["analytics", "marketing"] as const;
-export type ServiceCategory = (typeof SERVICE_CATEGORIES)[number];
+const SERVICE_CATEGORIES = ["analytics", "marketing"] as const;
+type ServiceCategory = (typeof SERVICE_CATEGORIES)[number];
 
 interface PresetDef {
 	/** Category the vendor's helper gates on. `either` = the helper accepts both. */
@@ -34,7 +34,7 @@ const DIGITS = /^\d{1,20}$/;
  * name get an empty default: add their cookies in the entry's `cookies` list.
  * Reviewed: 2026-11-23.
  */
-export const PRESETS = {
+const PRESETS = {
 	"google-tag": { category: "either", options: { id: /^[A-Z]{1,3}-[A-Z0-9]{4,20}$/ }, cookies: ["_ga", "_ga_*"] },
 	"google-tag-manager": { category: "either", options: { id: /^GTM-[A-Z0-9]{4,20}$/ }, cookies: [] },
 	"microsoft-clarity": { category: "analytics", options: { id: ID }, cookies: [] },
@@ -47,7 +47,7 @@ export const PRESETS = {
 	hotjar: { category: "analytics", options: { siteId: DIGITS }, cookies: [] },
 } satisfies Record<string, PresetDef>;
 
-export type PresetId = keyof typeof PRESETS;
+type PresetId = keyof typeof PRESETS;
 export const PRESET_IDS = Object.keys(PRESETS) as PresetId[];
 
 /** A validated entry. Exactly one of `preset` / `src` is set. */
@@ -64,7 +64,7 @@ export interface ServiceSpec {
 	cookies: string[];
 }
 
-export interface ParseResult {
+interface ParseResult {
 	services: ServiceSpec[];
 	errors: string[];
 }
@@ -217,7 +217,7 @@ export function c15tCategory(category: ServiceCategory): "measurement" | "market
 	return category === "analytics" ? "measurement" : "marketing";
 }
 
-export type ClearOnRevocationMap = Partial<Record<"measurement" | "marketing", { cookies: string[] }>>;
+type ClearOnRevocationMap = Partial<Record<"measurement" | "marketing", { cookies: string[] }>>;
 
 /**
  * clearOnRevocation config: the cookies each optional c15t category owns, merged

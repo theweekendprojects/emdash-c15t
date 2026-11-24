@@ -1,8 +1,7 @@
 /**
- * Sidebar settings page (Block Kit), the same mechanism emdash-better-auth and
- * emdash-smtp use. `settingsSchema` alone only surfaces under
- * Plugins -> manager -> Settings; an `adminPages` entry plus this `admin` route
- * gives the plugin its own sidebar link. Values are stored as `settings:<key>`
+ * Sidebar settings page (Block Kit), the only editor for these settings. It validates the whole form before
+ * saving, so the auto-generated form (`settingsSchema`) is deliberately not declared: it would write values that
+ * skip that validation. An `adminPages` entry plus this `admin` route gives the plugin its own sidebar link. Values are stored as `settings:<key>`
  * in kv, exactly where `loadSettings()` in runtime.ts reads them.
  *
  * Authorization: the route is NOT public, so EmDash gates it behind the admin
@@ -12,6 +11,8 @@ import { purgeExpired } from "./purge.js";
 import { isBannerPosition, BANNER_POSITIONS } from "./presentation.js";
 import { isLanguageSetting } from "./locale.js";
 import { parseAllowedHosts, parseServices } from "./services.js";
+import { readAllSettings } from "./settings.js";
+import type { RouteContext } from "./context.js";
 import { SETTINGS_DEFAULTS } from "./shared.js";
 
 export const ADMIN_PAGE_PATH = "/settings";
@@ -26,7 +27,7 @@ interface Interaction {
 }
 
 /** Same host-derived tenant key the /save route writes. */
-function siteHost(ctx: any): string {
+function siteHost(ctx: RouteContext): string {
 	try {
 		return new URL(ctx.site?.url ?? ctx.request?.url).hostname;
 	} catch {
@@ -38,7 +39,7 @@ function siteHost(ctx: any): string {
  * Block Kit external links must be absolute. `ctx.url()` is only absolute when the site
  * URL is configured, so fall back to the origin of the admin request itself.
  */
-function absoluteUrl(ctx: any, path: string): string {
+function absoluteUrl(ctx: RouteContext, path: string): string {
 	const viaSite = typeof ctx.url === "function" ? ctx.url(path) : path;
 	if (/^https?:\/\//i.test(viaSite)) return viaSite;
 	try {
@@ -48,27 +49,25 @@ function absoluteUrl(ctx: any, path: string): string {
 	}
 }
 
-async function readKv<T>(ctx: any, key: string): Promise<T | undefined> {
-	return ((await ctx.kv.get(`settings:${key}`)) ?? undefined) as T | undefined;
-}
-
-async function buildPage(ctx: any, toast?: { message: string; type: "success" | "error" }) {
+async function buildPage(ctx: RouteContext, toast?: { message: string; type: "success" | "error" }) {
 	const d = SETTINGS_DEFAULTS;
+	const all = await readAllSettings(ctx); // one query for every setting
+	const pick = <T>(key: string, fallback: T): T => (all[key] === undefined || all[key] === null ? fallback : (all[key] as T));
 	const v = {
-		enabled: (await readKv<boolean>(ctx, "enabled")) ?? d.enabled,
-		services: (await readKv<string>(ctx, "services")) ?? d.services,
-		allowedScriptHosts: (await readKv<string>(ctx, "allowedScriptHosts")) ?? d.allowedScriptHosts,
-		language: (await readKv<string>(ctx, "language")) ?? d.language,
-		colorScheme: (await readKv<string>(ctx, "colorScheme")) ?? d.colorScheme,
-		bannerPosition: (await readKv<string>(ctx, "bannerPosition")) ?? d.bannerPosition,
-		accentColor: (await readKv<string>(ctx, "accentColor")) ?? "",
-		requireChoice: (await readKv<boolean>(ctx, "requireChoice")) ?? d.requireChoice,
-		privacyUrl: (await readKv<string>(ctx, "privacyUrl")) ?? "",
-		imprintUrl: (await readKv<string>(ctx, "imprintUrl")) ?? "",
-		cookieUrl: (await readKv<string>(ctx, "cookieUrl")) ?? "",
-		policyVersion: (await readKv<string>(ctx, "policyVersion")) ?? d.policyVersion,
-		cookieMaxAgeMonths: (await readKv<number>(ctx, "cookieMaxAgeMonths")) ?? d.cookieMaxAgeMonths,
-		retentionMonths: (await readKv<number>(ctx, "retentionMonths")) ?? d.retentionMonths,
+		enabled: pick("enabled", d.enabled),
+		services: pick("services", d.services),
+		allowedScriptHosts: pick("allowedScriptHosts", d.allowedScriptHosts),
+		language: pick("language", d.language),
+		colorScheme: pick("colorScheme", d.colorScheme),
+		bannerPosition: pick("bannerPosition", d.bannerPosition),
+		accentColor: pick("accentColor", ""),
+		requireChoice: pick("requireChoice", d.requireChoice),
+		privacyUrl: pick("privacyUrl", ""),
+		imprintUrl: pick("imprintUrl", ""),
+		cookieUrl: pick("cookieUrl", ""),
+		policyVersion: pick("policyVersion", d.policyVersion),
+		cookieMaxAgeMonths: pick("cookieMaxAgeMonths", d.cookieMaxAgeMonths),
+		retentionMonths: pick("retentionMonths", d.retentionMonths),
 	};
 	const siteId = siteHost(ctx);
 	const total = await ctx.storage.consents.count({ siteId });
@@ -221,12 +220,20 @@ function policyUrlError(value: string): string | null {
  * Validates the whole form, then writes it. Nothing is written unless every field is valid,
  * so a bad service entry cannot silently replace a working config. Returns an error or null.
  */
-async function save(ctx: any, values: Record<string, unknown>): Promise<string | null> {
+async function save(ctx: RouteContext, values: Record<string, unknown>): Promise<string | null> {
 	const str = (k: string) => (typeof values[k] === "string" ? (values[k] as string).trim() : "");
-	const num = (k: string, fallback: number) => {
-		const n = Number(values[k]);
-		return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
+	// A whole number in [min, max], or an error. Never a silent default: a retention of 0 or 100000 must not be saved.
+	const whole = (k: string, label: string, min: number, max: number): number | string => {
+		const raw = values[k];
+		const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : Number.NaN;
+		if (!Number.isInteger(n) || n < min || n > max) return `${label} must be a whole number from ${min} to ${max}.`;
+		return n;
 	};
+
+	const retention = whole("retentionMonths", "Retention", 1, 120);
+	if (typeof retention === "string") return retention;
+	const maxAge = whole("cookieMaxAgeMonths", "Re-ask period", 1, 36);
+	if (typeof maxAge === "string") return maxAge;
 
 	const hosts = parseAllowedHosts(str("allowedScriptHosts"));
 	if (hosts.error) return hosts.error;
@@ -260,15 +267,15 @@ async function save(ctx: any, values: Record<string, unknown>): Promise<string |
 		imprintUrl: str("imprintUrl"),
 		cookieUrl: str("cookieUrl"),
 		policyVersion: str("policyVersion") || SETTINGS_DEFAULTS.policyVersion,
-		cookieMaxAgeMonths: num("cookieMaxAgeMonths", SETTINGS_DEFAULTS.cookieMaxAgeMonths),
-		retentionMonths: num("retentionMonths", SETTINGS_DEFAULTS.retentionMonths),
+		cookieMaxAgeMonths: maxAge,
+		retentionMonths: retention,
 	};
 	for (const [k, val] of Object.entries(writes)) await ctx.kv.set(`settings:${k}`, val);
 	return null;
 }
 
 export const adminRoute = {
-	handler: async (ctx: any) => {
+	handler: async (ctx: RouteContext) => {
 		const i = (ctx.input ?? {}) as Interaction;
 		if (i.type === "form_submit" && i.action_id === SAVE_ACTION) {
 			const err = await save(ctx, i.values ?? {});

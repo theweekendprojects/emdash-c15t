@@ -32,7 +32,8 @@ interface PrivacyConfig {
 	services: ServiceSpec[];
 	clearOnRevocation: Partial<Record<"measurement" | "marketing", { cookies: string[] }>>;
 	legalLinks: { privacy?: string; imprint?: string; cookies?: string };
-	hidePrompt: boolean; // true on policy pages: no banner, reopen button still shows
+	hidePrompt: boolean; // no banner: on policy pages, and on sites with no services (embed-only)
+	showTrigger: boolean; // the floating reopen button; off when there are no services
 	policyVersion: string;
 	bannerVersion: string;
 }
@@ -247,10 +248,12 @@ function start(config: PrivacyConfig): void {
 			// until the visitor chooses. The reopen button stays on every page.
 			banner: config.hidePrompt ? false : { hideBranding: true, legalLinks: legalKeys },
 			dialog: { hideBranding: true, legalLinks: legalKeys },
-			trigger: {
-				position: triggerPosition(config.bannerPosition),
-				showWhen: config.hidePrompt ? "always" : "after-consent",
-			},
+			trigger: config.showTrigger
+				? {
+						position: triggerPosition(config.bannerPosition),
+						showWhen: config.hidePrompt ? "always" : "after-consent",
+					}
+				: false,
 		},
 		// Messages for every bundled language, our de/en wording on top.
 		i18n: { locale, messages: messagesWithOverrides() as never, detectBrowserLanguage: false },

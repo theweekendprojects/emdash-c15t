@@ -9,6 +9,14 @@ import { offline } from "@c15t/browser";
 import { retentionCutoff, purgeDue, DAY_MS } from "./purge.js";
 import { buildPolicyRule, monthsToDays, OPTIONAL_C15T_CATEGORIES } from "./rule.js";
 
+/** The parts of c15t's resolved policy this check reads. */
+interface ResolvedPolicy {
+	status: string;
+	reason?: string;
+	policy: { model: string; prompt: string };
+	fingerprints: { choice: string };
+}
+
 async function resolve(rule: unknown, country?: string) {
 	const factory = offline({ policyRules: [rule as never] });
 	const transport = factory({
@@ -17,7 +25,7 @@ async function resolve(rule: unknown, country?: string) {
 		translations: {},
 	} as never);
 	const res = await transport.init!({ overrides: country ? { country } : {}, user: null } as never);
-	return (res as { policyResolution: any }).policyResolution;
+	return (res as { policyResolution: ResolvedPolicy }).policyResolution;
 }
 
 const rule = buildPolicyRule({ policyVersion: "1", cookieMaxAgeMonths: 12 });

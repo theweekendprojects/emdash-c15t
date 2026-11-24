@@ -450,3 +450,39 @@ Open items:
 - `npm audit` reports vulnerabilities in the dependency tree. Not reviewed.
 - c15t stays pinned at 3.0.0. 3.2.2 exists but has not been reviewed.
 - Retention still depends on traffic (lazy purge in `/save`), since the cron hook was unreliable on the tested host.
+
+---
+
+## 11. Deep review and hardening (0.2.0)
+
+A deep review of 0.1.0 found the items below. Each was reproduced first (tests in `tests/review.test.ts` and the
+browser suite), then fixed. Section 10 describes the first implementation. This section supersedes it where they differ.
+
+| Finding | Status | Where |
+| --- | --- | --- |
+| Client-set timestamp could backdate or forward-date a proof | Fixed: server clock | `save` in `src/runtime.ts` |
+| Lazy purge deleted 100 rows a run, not 200 (EmDash caps pages at 100) | Fixed: paged, bounded | `src/purge.ts` |
+| No third-party license notices in the package | Fixed | `THIRD_PARTY_LICENSES.md` |
+| Peer range `>=0.30.0` was never tested | Fixed: `>=1.2.0`, CI runs 1.2.0 and 1.6.0 | `package.json`, `ci.yml` |
+| Cached bundle ran without a check, and old versions were kept forever | Fixed: hash-verified, stale keys removed | loader in `src/runtime.ts` |
+| Embed-only sites loaded no client, so placeholders did nothing | Fixed: c15t starts with the banner hidden | `page:fragments` |
+| One storage query per setting on every render | Fixed: one `settings.list()` | `src/settings.ts` |
+| Unbounded inputs (empty subject, 40 000 grant keys, retention 100 000, retention 0 silently 36) | Fixed: bounds, errors not defaults | `save` route, admin `save` |
+| Dead headers on the CSV route, and a comment that credited the wrong source | Fixed | export route, test comments |
+| `any` in route handlers; unused exports; duplicate settings editor | Fixed: `RouteContext`, unexported; `settingsSchema` removed | `src/context.ts`, `src/index.ts` |
+| Dev dependencies with known advisories | Fixed; production audit is clean | `package.json` |
+
+**Decisions**
+
+- The browser-set `givenAt` is accepted and ignored, so bundles from 0.1.x keep validating.
+- The `settingsSchema` form is removed. The Block Kit page is the only editor, and it validates the whole form.
+- A save while disabled returns `ok` without storing. An error would make c15t retry forever.
+- The CSV export needs an admin API token (section 10 described the option chosen). A browser download without a token is refused.
+
+**Still open**
+
+- The host's edge cache (`emdash-multisite/src/edge-cache.ts`) purges on admin writes from a fixed list. Our settings
+  save is not on it, so a settings change can stay stale for up to an hour. This needs a change in that repo.
+- A retention backlog larger than 2 000 rows (per visit-day) takes several days to clear. The cron path is unreliable on
+  the tested host.
+- The default fallback language is German. That is the right baseline for the target market, not for every site.

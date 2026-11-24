@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { dispatchPluginApiRequest } from "emdash/internal/plugin-test-runtime";
 import { PLUGIN_ID } from "../src/shared.js";
 import { adminCall, createRuntime, fragmentsFor, rawDb, type Runtime } from "./support/harness.js";
+import { BANNER_HASH } from "../src/assets.generated.js";
 
 const BUNDLE = fileURLToPath(new URL("../dist/banner.js", import.meta.url));
 const ROUTE_PREFIX = `/_emdash/api/plugins/${PLUGIN_ID}/`;
@@ -65,6 +66,10 @@ beforeAll(async () => {
 				res.writeHead(404).end();
 				return;
 			}
+			const embedBody =
+				url.pathname === "/embed"
+					? `<div class="emdash-privacy-embed"><iframe data-src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?playsinline=1" data-category="marketing" title="Demo"></iframe><div class="emdash-privacy-placeholder"><p>Third-party video.</p><button type="button" data-emdash-privacy-open>Privacy settings</button></div></div>`
+					: "<p>Body text.</p>";
 			// A page: its head config and body loader come from the runtime's own page:fragments output.
 			const fragments = (await fragmentsFor(runtime, url.pathname, url.searchParams.get("lang") ?? "en")) as Array<{
 				placement: string;
@@ -77,7 +82,7 @@ beforeAll(async () => {
 				.end(
 					`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${url.pathname}</title>
 <script>${head}</script></head>
-<body><h1>Test page ${url.pathname}</h1><p>Body text.</p>
+<body><h1>Test page ${url.pathname}</h1>${embedBody}
 <script>${loader}</script></body></html>`,
 				);
 		} catch (err) {
@@ -288,4 +293,144 @@ describe("banner in a real browser against the EmDash runtime", () => {
 		expect(await shadowText(page)).not.toMatch(/Accept all|Alle akzeptieren/);
 		await context.close();
 	}, 60_000);
+});
+
+describe("review: bundle cache integrity and embed-only sites", () => {
+	const KEY = `emdash-privacy-js:${BANNER_HASH}`;
+
+	it("a tampered cached bundle is never run, and the banner still mounts from the verified bundle", async () => {
+		const context = await browser.newContext();
+		// Runs before any page script: plants code under the cache key the loader reads first.
+		await context.addInitScript(
+			({ key }) => {
+				try {
+					localStorage.setItem(key, "window.__pwned = 1;");
+				} catch {
+					/* storage may be disabled */
+				}
+			},
+			{ key: KEY },
+		);
+		await context.route("**/*", (route) => {
+			const url = route.request().url();
+			if (url.startsWith(origin)) return route.continue();
+			return route.fulfill({ status: 204, body: "" });
+		});
+		const page = await context.newPage();
+		const consoleErrors: string[] = [];
+		page.on("console", (m) => {
+			if (m.type() === "error") consoleErrors.push(m.text());
+		});
+		await page.goto(`${origin}/`, { waitUntil: "load" });
+		await waitForBannerButton(page).catch(() => {
+			throw new Error(`banner did not mount after a tampered cache. Console: ${consoleErrors.join(" | ")}`);
+		});
+		expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+		await context.close();
+	}, 60_000);
+
+	it("a verified cached copy loads with no bundle request, and a stale version's key is removed", async () => {
+		const context = await browser.newContext();
+		await context.route("**/*", (route) => {
+			const url = route.request().url();
+			if (url.startsWith(origin)) return route.continue();
+			return route.fulfill({ status: 204, body: "" });
+		});
+		const bundleRequests: string[] = [];
+		const page = await context.newPage();
+		page.on("request", (r) => {
+			if (r.url().includes("/assets/banner-")) bundleRequests.push(r.url());
+		});
+		// First visit: fetches the bundle, verifies it, stores it.
+		await page.goto(`${origin}/`, { waitUntil: "load" });
+		await waitForBannerButton(page);
+		expect(bundleRequests).toHaveLength(1);
+		// Leave a stale key from an older build, as a previous release would have.
+		await page.evaluate(() => localStorage.setItem("emdash-privacy-js:000000000000", "old"));
+		// Second visit: the verified copy runs from localStorage, so no bundle request is made.
+		bundleRequests.length = 0;
+		await page.goto(`${origin}/`, { waitUntil: "load" });
+		await waitForBannerButton(page);
+		expect(bundleRequests).toEqual([]);
+		const keys = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("emdash-privacy-js:")));
+		expect(keys).toEqual([KEY]);
+		await context.close();
+	}, 60_000);
+
+	it("a site with no tracked services still starts c15t, so an embed placeholder can open the dialog", async () => {
+		const seeded = await adminCall(runtime, {
+			type: "form_submit",
+			action_id: "save_privacy",
+			values: {
+				enabled: true,
+				services: "[]",
+				allowedScriptHosts: "",
+				language: "auto",
+				colorScheme: "system",
+				bannerPosition: "bottom-left",
+				accentColor: "",
+				requireChoice: false,
+				privacyUrl: "",
+				imprintUrl: "",
+				cookieUrl: "",
+				policyVersion: "1",
+				cookieMaxAgeMonths: 12,
+				retentionMonths: 36,
+			},
+		});
+		expect(((await seeded.json()) as { data: { toast?: { type: string } } }).data.toast?.type).toBe("success");
+		try {
+			externalRequests.length = 0;
+			const { context, page, consoleErrors } = await openPage("/embed", { expectBanner: false });
+			// The iframe is gated: no request to the video host before consent.
+			expect(await page.evaluate(() => document.querySelector("iframe")?.hasAttribute("src"))).toBe(false);
+			expect(externalRequests.filter((u) => u.includes("youtube"))).toEqual([]);
+
+			// The placeholder button opens the preference dialog (the banner stays hidden).
+			await page.click("[data-emdash-privacy-open]");
+			await page.waitForFunction(() => {
+				const walk = (root: Document | ShadowRoot): boolean => {
+					for (const el of Array.from(root.querySelectorAll("*"))) {
+						if (el.shadowRoot) {
+							if (/Privacy settings|Datenschutz-Einstellungen/.test(el.shadowRoot.textContent ?? "")) return true;
+							if (walk(el.shadowRoot)) return true;
+						}
+					}
+					return false;
+				};
+				return walk(document);
+			}, null, { timeout: 15_000 });
+
+			// Allowing the category in the dialog sets the iframe's src, and only then does the video load.
+			const saved = page.waitForResponse(isSaveRequest);
+			expect(await clickButton(page, ACCEPT)).toBe(true);
+			expect((await saved).status()).toBe(200);
+			await page.waitForFunction(() => document.querySelector("iframe")?.hasAttribute("src") === true, null, { timeout: 15_000 });
+			await waitUntil(() => externalRequests.some((u) => u.includes("youtube-nocookie")), "the video request after consent");
+			expect(consoleErrors).toEqual([]);
+			await context.close();
+		} finally {
+			// Restore the services used by the other browser scenarios.
+			await adminCall(runtime, {
+				type: "form_submit",
+				action_id: "save_privacy",
+				values: {
+					enabled: true,
+					services: SERVICES,
+					allowedScriptHosts: "",
+					language: "auto",
+					colorScheme: "system",
+					bannerPosition: "bottom-left",
+					accentColor: "",
+					requireChoice: false,
+					privacyUrl: "/datenschutz",
+					imprintUrl: "/impressum",
+					cookieUrl: "/cookies",
+					policyVersion: "1",
+					cookieMaxAgeMonths: 12,
+					retentionMonths: 36,
+				},
+			});
+		}
+	}, 90_000);
 });

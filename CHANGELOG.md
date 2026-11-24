@@ -25,7 +25,44 @@ First usable release. Verified end to end on a live EmDash site (Cloudflare Work
 Known limits: cron hook unreliable on the tested host; strict CSP needs `script-src blob:`; tenant
 isolation depends on the platform's plugin-storage isolation and was not exercised on a multi-site host.
 
-## Unreleased
+## 0.2.0
+Not yet published. A hardening release after a deep review of 0.1.0 and the first 0.2.0 work. Some behaviour changed,
+so read the breaking notes first.
+
+**Breaking or behaviour changes**
+- The stored consent time is the server's clock. The browser's `givenAt` is ignored. Existing records are unchanged.
+- Saves while the banner is disabled store nothing (they return `{ok: true, stored: false}`).
+- CSV export is a command-line step with an API token that has the `admin` scope. The old download link is removed.
+  A browser request without a token gets `403 CSRF_REJECTED`, as EmDash enforces.
+- The admin page is the only settings editor. The auto-generated `settingsSchema` form is removed, because it skipped validation.
+- Retention and re-ask periods outside their range (1-120 and 1-36 months) are errors, not a silent default.
+- A `subjectId` must not be empty, and a save may carry at most 20 grant keys.
+- The peer range is `emdash >=1.2.0`. The package was previously declared `>=0.30.0`, which was never tested.
+- Development requires Node 22.23.4 or newer (Astro 7.4).
+
+**Fixes**
+- Lazy purge: EmDash caps a query page at 100 rows. The purge asked for 200, and removed only 100 per run. It now
+  pages correctly and clears up to 2 000 records per visit-day, with the cron run clearing 5 000.
+- Bundle cache: a cached copy runs only if its SHA-256 matches the build hash. Anything else is removed and refetched.
+  Other versions' cache keys are removed. A tampered cache entry can no longer run.
+- Embed-only sites: with no tracked services, c15t still starts (banner hidden, no reopen button), so a `ConsentEmbed`
+  placeholder can open the preference dialog and gate its video.
+- Settings: all settings are read in one query, not one per setting, on every public render and admin page load.
+- Raw CSV response: the route no longer sets headers EmDash discards. EmDash sets `nosniff` and `no-store` itself.
+- `zod` is a runtime dependency (pinned). The c15t packages are build-time only.
+- A stored invalid services config shows an error on the admin page.
+- Third-party notices: `THIRD_PARTY_LICENSES.md` ships in the package (c15t Apache-2.0, valibot and base-x MIT).
+
+**Tests and tooling**
+- Integration tests on the real EmDash runtime (SQLite), a headless browser against the real banner and runtime, and an
+  Astro build of `ConsentEmbed`. `npm test`.
+- Regression tests for each review finding (`tests/review.test.ts`).
+- CI runs the suite on EmDash 1.2.0 (the floor) and 1.6.0, on Node 22.23.5.
+- Dev dependencies upgraded: EmDash 1.6.0, Astro 7.4.13, Vitest 4.1.12, esbuild 0.28.2, and exact pins for `@types/node`
+  and `typescript`. `npm audit` reports nothing for production, and nothing for the dev tree.
+- `AGENTS.md` records the EmDash and c15t facts that were verified.
+
+**Earlier work since 0.1.0**
 - **CSV export** is now a command-line step with an API token that has the `admin` scope (`curl` with
   `Authorization: Bearer ec_pat_...`). The admin page shows the URL. The broken browser download link is removed. A plain
   browser request without a token is refused with 403 `CSRF_REJECTED`, as EmDash enforces.

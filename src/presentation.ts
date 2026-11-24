@@ -15,8 +15,8 @@ export const BANNER_POSITIONS = [
 	"bar-bottom",
 	"bar-top",
 ] as const;
-export type BannerPosition = (typeof BANNER_POSITIONS)[number];
-export const DEFAULT_BANNER_POSITION: BannerPosition = "bottom-left";
+type BannerPosition = (typeof BANNER_POSITIONS)[number];
+const DEFAULT_BANNER_POSITION: BannerPosition = "bottom-left";
 
 export function isBannerPosition(value: unknown): value is BannerPosition {
 	return typeof value === "string" && (BANNER_POSITIONS as readonly string[]).includes(value);

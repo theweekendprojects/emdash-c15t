@@ -23,7 +23,7 @@ import type { PluginDescriptor } from "emdash";
 import { definePlugin } from "emdash";
 import { version } from "../package.json" with { type: "json" };
 import { ADMIN_PAGE_PATH } from "./admin-page.js";
-import { PACKAGE_NAME, PLUGIN_ID, SETTINGS_SCHEMA, STORAGE_CONFIG } from "./shared.js";
+import { PACKAGE_NAME, PLUGIN_ID, STORAGE_CONFIG } from "./shared.js";
 import { consentRoutes, privacyHooks } from "./runtime.js";
 
 export { PACKAGE_NAME, PLUGIN_ID, BANNER_VERSION, CATEGORIES } from "./shared.js";
@@ -48,7 +48,6 @@ export function privacyPlugin(): PluginDescriptor {
 		capabilities: ["hooks.page-fragments:register"],
 		// Descriptor storage uses flat indexes; the composite index lives in the runtime.
 		storage: { consents: { indexes: ["siteId", "ts", "subjectId"] } },
-		settingsSchema: SETTINGS_SCHEMA,
 		// own sidebar link (Block Kit page served by the `admin` route)
 		adminPages: [{ path: ADMIN_PAGE_PATH, label: "Privacy", icon: "shield" }],
 	};
@@ -66,7 +65,6 @@ export default definePlugin({
 	hooks: privacyHooks,
 	routes: consentRoutes,
 	admin: {
-		settingsSchema: SETTINGS_SCHEMA,
 		pages: [{ path: ADMIN_PAGE_PATH, label: "Privacy", icon: "shield" }],
 	},
 });

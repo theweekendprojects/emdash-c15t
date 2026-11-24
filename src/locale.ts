@@ -7,7 +7,7 @@
  * the default for this plugin's German-market baseline.
  */
 
-export const FALLBACK_LOCALE = "de";
+const FALLBACK_LOCALE = "de";
 
 /** Primary language subtag, lowercased, or null. `en-GB` -> `en`, `pt_BR` -> `pt`. */
 function primary(code: string): string | null {

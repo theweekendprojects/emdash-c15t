@@ -7,7 +7,7 @@
  * Sheets show it as text.
  */
 
-export const CONSENT_CSV_COLUMNS = [
+const CONSENT_CSV_COLUMNS = [
 	"createdAt",
 	"policyVersion",
 	"bannerVersion",

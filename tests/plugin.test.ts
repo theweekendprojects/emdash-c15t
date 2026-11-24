@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	ADMIN,
 	rawDb,
@@ -275,7 +275,7 @@ describe("CSV export", () => {
 		expect(res.headers.get("content-type")).toMatch(/text\/csv/);
 		expect(res.headers.get("content-disposition")).toBe('attachment; filename="consent-export.csv"');
 		expect(res.headers.get("cache-control")).toBe("private, no-store");
-		// The route sets nosniff, and it reaches the client unchanged. Checked by running the route, not by reading source.
+		// EmDash sets nosniff on raw responses itself (the route sets no security headers). Checked by running the route.
 		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
 		const text = await res.text();
 		expect(text.split("\r\n")[0]).toBe(
@@ -336,11 +336,18 @@ describe("page:fragments (banner injection)", () => {
 		expect(configOf(fragments).hidePrompt).toBe(true);
 	});
 
-	it("does not inject anything when the banner is disabled or has no services", async () => {
+	it("injects nothing when the banner is disabled", async () => {
 		await saveSettings(runtime, { enabled: false });
 		expect(await fragmentsFor(runtime, "/")).toEqual([]);
-		await saveSettings(runtime, { enabled: true, services: "[]" });
-		expect(await fragmentsFor(runtime, "/")).toEqual([]);
+	});
+
+	it("with no services, still starts c15t with the banner hidden and no reopen button (embed-only sites)", async () => {
+		await saveSettings(runtime, { services: "[]" });
+		const fragments = (await fragmentsFor(runtime, "/")) as Array<{ code?: string; placement?: string }>;
+		const config = configOf(fragments);
+		expect(config.services).toEqual([]);
+		expect(config.hidePrompt).toBe(true);
+		expect(config.showTrigger).toBe(false);
 	});
 
 	it("escapes a </script> in an admin-entered service name so it cannot break the inline script", async () => {
@@ -356,15 +363,27 @@ describe("page:fragments (banner injection)", () => {
 	});
 });
 
+/**
+ * Runs `fn` with the server clock at `at`. Records are stored at the server's receive time, so this is how a
+ * test creates an old record. (The browser's own timestamp is ignored, as the review requires.)
+ */
+async function atTime<T>(at: number, fn: () => Promise<T>): Promise<T> {
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(at);
+	try {
+		return await fn();
+	} finally {
+		vi.useRealTimers();
+	}
+}
+
 describe("retention", () => {
 	const fortyMonthsAgo = Date.now() - 40 * 30 * DAY;
 
 	it("deletes records past the retention period when the lazy purge runs", async () => {
-		await call(runtime, "save", {
-			method: "POST",
-			headers: SAME_ORIGIN,
-			body: savePayload({ subjectId: "old", givenAt: fortyMonthsAgo }),
-		});
+		await atTime(fortyMonthsAgo, () =>
+			call(runtime, "save", { method: "POST", headers: SAME_ORIGIN, body: savePayload({ subjectId: "old" }) }),
+		);
 		await call(runtime, "save", { method: "POST", headers: SAME_ORIGIN, body: savePayload({ subjectId: "fresh" }) });
 		const subjects = (await exportRows(runtime)).map((r) => r[7]);
 		expect(subjects).toEqual(["fresh"]);
@@ -372,11 +391,9 @@ describe("retention", () => {
 
 	it("runs the lazy purge at most once a day, so old records added later wait for the next run", async () => {
 		await call(runtime, "save", { method: "POST", headers: SAME_ORIGIN, body: savePayload({ subjectId: "first" }) });
-		await call(runtime, "save", {
-			method: "POST",
-			headers: SAME_ORIGIN,
-			body: savePayload({ subjectId: "old-late", givenAt: fortyMonthsAgo }),
-		});
+		await atTime(fortyMonthsAgo, () =>
+			call(runtime, "save", { method: "POST", headers: SAME_ORIGIN, body: savePayload({ subjectId: "old-late" }) }),
+		);
 		const subjects = (await exportRows(runtime)).map((r) => r[7]).sort();
 		expect(subjects).toEqual(["first", "old-late"]);
 	});
@@ -384,11 +401,9 @@ describe("retention", () => {
 	it("the admin 'delete expired now' action removes expired records and reports the count", async () => {
 		// First save runs the lazy purge, so the once-a-day gate is closed for the next save.
 		await call(runtime, "save", { method: "POST", headers: SAME_ORIGIN, body: savePayload({ subjectId: "first" }) });
-		await call(runtime, "save", {
-			method: "POST",
-			headers: SAME_ORIGIN,
-			body: savePayload({ subjectId: "old-late", givenAt: fortyMonthsAgo }),
-		});
+		await atTime(fortyMonthsAgo, () =>
+			call(runtime, "save", { method: "POST", headers: SAME_ORIGIN, body: savePayload({ subjectId: "old-late" }) }),
+		);
 		expect((await exportRows(runtime)).map((r) => r[7]).sort()).toEqual(["first", "old-late"]);
 
 		const toast = await toastOf(await adminCall(runtime, { type: "block_action", action_id: "purge_now" }));
@@ -402,12 +417,15 @@ describe("scale: paging and batched purge", () => {
 	const ROWS = 250;
 
 	it("exports every record exactly once across export pages", async () => {
+		const base = Date.now() - ROWS * 1000;
 		for (let i = 0; i < ROWS; i++) {
-			const res = await call(runtime, "save", {
-				method: "POST",
-				headers: SAME_ORIGIN,
-				body: savePayload({ subjectId: `s${String(i).padStart(4, "0")}`, givenAt: Date.now() - (ROWS - i) * 1000 }),
-			});
+			const res = await atTime(base + i * 1000, () =>
+				call(runtime, "save", {
+					method: "POST",
+					headers: SAME_ORIGIN,
+					body: savePayload({ subjectId: `s${String(i).padStart(4, "0")}` }),
+				}),
+			);
 			expect(res.status).toBe(200);
 		}
 		const subjects = (await exportRows(runtime)).map((r) => r[7]!);
@@ -421,13 +439,15 @@ describe("scale: paging and batched purge", () => {
 		// Establish the once-a-day gate with a fresh save, then add expired records after it.
 		await call(runtime, "save", { method: "POST", headers: SAME_ORIGIN, body: savePayload({ subjectId: "fresh" }) });
 		const old = Date.now() - 40 * 30 * DAY;
-		for (let i = 0; i < ROWS; i++) {
-			await call(runtime, "save", {
-				method: "POST",
-				headers: SAME_ORIGIN,
-				body: savePayload({ subjectId: `old${i}`, givenAt: old }),
-			});
-		}
+		await atTime(old, async () => {
+			for (let i = 0; i < ROWS; i++) {
+				await call(runtime, "save", {
+					method: "POST",
+					headers: SAME_ORIGIN,
+					body: savePayload({ subjectId: `old${i}` }),
+				});
+			}
+		});
 		const toast = await toastOf(await adminCall(runtime, { type: "block_action", action_id: "purge_now" }));
 		expect(toast?.message).toBe(`Deleted ${ROWS} expired record(s)`);
 		expect((await exportRows(runtime)).map((r) => r[7])).toEqual(["fresh"]);

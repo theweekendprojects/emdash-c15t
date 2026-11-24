@@ -64,12 +64,12 @@ EmDash templates do.
 
 ## Configure
 
-Admin → Plugins → **Privacy**.
+Admin → **Privacy** (the sidebar page). It is the only editor for these settings: it checks the whole form before saving.
 
 | Setting | Meaning |
 | --- | --- |
 | Enable consent banner | Master switch. Off = nothing is injected. |
-| Tracked services (JSON) | Your analytics/marketing services. **The banner only appears when this list is non-empty.** Invalid entries block saving. |
+| Tracked services (JSON) | Your analytics/marketing services. **The banner only appears when this list is non-empty.** With no services the page still starts c15t (no banner, no reopen button), so embedded videos can open the preference dialog. Invalid entries block saving. |
 | Allowed script hosts | Optional. Comma-separated domains. When set, custom `src` URLs must be on these domains or their subdomains. |
 | Banner language | `auto` (follows the page language), or a code such as `de`, `en`, `fr`. Unbundled languages show German. See Languages. |
 | Color scheme | Follow the page (default), Light, or Dark. |
@@ -237,7 +237,7 @@ Note: `window.c15t` is c15t's debug object, not the API. Use `window.emdashPriva
 
 ## Development
 
-Requires Node 22.16 or newer (the integration tests use `node:sqlite`).
+Development requires Node 22.23.4 or newer (the Astro 7 toolchain). The integration tests also use `node:sqlite`. EmDash itself needs Node 22.16 or newer.
 
 ```bash
 npm install --legacy-peer-deps   # --legacy-peer-deps: npm's peer resolver fails on vitest's optional browser peers
@@ -261,20 +261,24 @@ instead of the one Playwright installs, set `CHROMIUM_PATH`.
   [Cloudflare's guide](https://developers.cloudflare.com/waf/custom-rules/rate-limiting/create-dashboard).
 - **Same-origin.** `/save` refuses requests whose `Origin` (or, without it, `Sec-Fetch-Site`) is not your site.
   A plain script with no browser headers is refused as well.
-- **Retention.** Expired records are purged from inside `/save`, at most once a day per site. The plugin
-  also schedules a daily cron task, but in testing the host did not reliably run plugin cron hooks, so do
-  not depend on it.
+- **Retention.** Expired records are purged from inside `/save`, at most once a day per site, up to 2 000 records
+  per run. A backlog larger than that clears over later days. The daily cron task clears up to 5 000 records per run,
+  but the host did not reliably run plugin cron hooks in testing, so do not depend on it.
+- **Stored time.** Every record is stamped with the server's clock when it arrives. The browser's own timestamp is ignored.
 - **Content Security Policy.** The banner bundle is loaded with `fetch` and imported from a `blob:` URL.
   A strict CSP needs `script-src blob:` (and `'unsafe-inline'` or a nonce for the tiny inline loader).
   The page context EmDash gives plugins has no nonce field, so the inline loader needs `'unsafe-inline'` under a strict CSP.
 - **Weight.** About 1 KB of inline script is added to each page. The bundle (about 405 KB minified, about 117 KB gzipped) is fetched once per browser, then cached in `localStorage` under a content-hash key.
   After that the loader imports it from `localStorage` with no network at all (verified: zero bundle requests on
-  later page views, even with the HTTP cache disabled). The hash in the key busts the cache on a new version; a
-  quota or parse error falls back to the fetch, so cache trouble can't break the banner.
+  later page views). Before running a cached copy the loader checks its SHA-256 against the hash the page was built
+  with. A copy that does not match is removed and the bundle is fetched again. Keys from other versions are removed.
+  Without SubtleCrypto (plain http, not localhost) nothing is cached. A quota or parse error falls back to the fetch,
+  so cache trouble can't break the banner.
 - **Multi-tenant.** The site key comes from the server-side site URL, never from the request body, and a
   body containing a `siteId` is rejected. The admin record counter is per site. Records live in EmDash
   plugin storage, so they follow whatever isolation your platform gives plugin storage.
 
 ## License
 
-MIT © The Weekend Projects
+MIT © The Weekend Projects. The bundled third-party code (c15t, valibot, base-x) keeps its own license. The notices and
+license texts are in `THIRD_PARTY_LICENSES.md`, which ships in the npm package.

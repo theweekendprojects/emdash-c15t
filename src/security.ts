@@ -39,7 +39,7 @@ export function isSameOriginRequest(
  * A trusted plugin route gets a real `Request`, so `headers` is a `Headers` object
  * (`Object.entries` on it is empty). A sandboxed route gets a plain record. Accept both.
  */
-export type HeadersLike = Headers | Record<string, string | undefined>;
+type HeadersLike = Headers | Record<string, string | undefined>;
 
 function header(headers: HeadersLike, name: string): string | undefined {
 	if (typeof (headers as Headers).get === "function") return (headers as Headers).get(name) ?? undefined;
