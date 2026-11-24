@@ -19,11 +19,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/theweekendprojects/emdash-privacy.git"
+    "url": "git+https://github.com/theweekendprojects/emdash-c15t.git"
   },
-  "homepage": "https://github.com/theweekendprojects/emdash-privacy#readme",
+  "homepage": "https://github.com/theweekendprojects/emdash-c15t#readme",
   "bugs": {
-    "url": "https://github.com/theweekendprojects/emdash-privacy/issues"
+    "url": "https://github.com/theweekendprojects/emdash-c15t/issues"
   },
   "publishConfig": {
     "access": "public"
