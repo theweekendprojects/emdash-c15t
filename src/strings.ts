@@ -1,8 +1,9 @@
 /**
- * DE/EN copy for c15t's i18n (`i18n.messages` keyed by language). Keys match
- * c15t's `Translations` shape (verified against @c15t/translations 3.0.0):
+ * DE/EN copy layered over c15t's bundled translations (`i18n.messages`, key by key).
+ * Keys match c15t's `Translations` shape (verified against @c15t/translations 3.0.0):
  *   common.*, cookieBanner.*, consentManagerDialog.*, consentTypes.<cat>.*
- * German is the default; English is used when the page locale starts with "en".
+ * Which language is shown is decided in locale.ts: the setting or page language if
+ * bundled, else German.
  *
  * Accept and Reject are deliberately given equal, neutral wording (no dark
  * pattern). This file is the single place operator-facing wording lives.
@@ -76,3 +77,12 @@ export const strings = {
 		},
 	},
 } as const;
+
+/**
+ * Label for the imprint link (Impressum). c15t's own term for this page is
+ * "terms of service", which is wrong for a German imprint, so the label is set
+ * per language instead.
+ */
+export function imprintLabel(locale: string): string {
+	return locale === "de" ? "Impressum" : "Imprint";
+}

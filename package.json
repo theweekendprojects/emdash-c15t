@@ -1,6 +1,6 @@
 {
-  "name": "emdash-privacy",
-  "version": "0.1.0",
+  "name": "emdash-c15t",
+  "version": "0.2.0",
   "description": "Per-site GDPR/TDDDG cookie consent for EmDash CMS: a themed, dark/light consent banner (DE/EN) that follows your site's design, with Google Consent Mode v2 and GPC, powered by c15t. Consent proof is stored in your own D1, no third-party backend.",
   "type": "module",
   "license": "MIT",
@@ -19,11 +19,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/theweekendprojects/emdash-privacy.git"
+    "url": "git+https://github.com/theweekendprojects/emdash-c15t.git"
   },
-  "homepage": "https://github.com/theweekendprojects/emdash-privacy#readme",
+  "homepage": "https://github.com/theweekendprojects/emdash-c15t#readme",
   "bugs": {
-    "url": "https://github.com/theweekendprojects/emdash-privacy/issues"
+    "url": "https://github.com/theweekendprojects/emdash-c15t/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -34,7 +34,9 @@
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
     "selfcheck": "bash scripts/selfcheck.sh",
-    "prepack": "npm run build:client"
+    "prepack": "npm run build:client",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -43,27 +45,39 @@
       "import": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./sandbox": {
-      "import": "./src/sandbox-entry.ts",
-      "default": "./src/sandbox-entry.ts"
+    "./embed": {
+      "import": "./src/components/ConsentEmbed.astro",
+      "default": "./src/components/ConsentEmbed.astro"
     }
   },
   "files": [
     "src",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD_PARTY_LICENSES.md",
+    "!src/**/*.selfcheck.ts"
   ],
   "peerDependencies": {
-    "emdash": ">=0.30.0"
+    "emdash": ">=1.2.0"
   },
   "dependencies": {
-    "@c15t/browser": "3.0.0"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "esbuild": "^0.24.0",
-    "typescript": "^5.7.0",
-    "zod": "^4.4.3"
+    "@astrojs/react": "7.1.9",
+    "@c15t/browser": "3.0.0",
+    "@c15t/core": "3.0.0",
+    "@c15t/integrations": "3.0.0",
+    "@c15t/translations": "3.0.0",
+    "@types/node": "22.20.5",
+    "astro": "7.4.13",
+    "emdash": "1.6.0",
+    "esbuild": "0.28.2",
+    "playwright-core": "1.56.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
   }
 }

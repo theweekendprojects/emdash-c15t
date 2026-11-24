@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # ubuntu-latest is 26.04, which Playwright 1.56 does not support.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # The peer range floor (1.2.0) and the latest release. The dev dependency is the latest.
+        emdash: ["1.2.0", "1.6.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Exact: the dev toolchain (Astro 7.4) requires Node >= 22.23.4. node:sqlite needs 22.5+.
+          node-version: "22.23.5"
+          cache: npm
+      # --legacy-peer-deps: npm's peer resolver fails on vitest's optional browser peers
+      # (npm error "Cannot read properties of null (reading 'edgesOut')"). See README, Development.
+      - run: npm ci --legacy-peer-deps
+      # Test the matrix's EmDash version, not only the one in devDependencies. --no-save leaves the lockfile alone.
+      - run: npm install --no-save --legacy-peer-deps emdash@${{ matrix.emdash }}
+      - run: npm run build:client
+      # Chromium for the browser tests (tests/browser.test.ts), with the system libraries it needs on Linux.
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run typecheck
+      - run: npm run selfcheck
+      - run: npm test

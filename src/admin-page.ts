@@ -1,17 +1,22 @@
 /**
- * Sidebar settings page (Block Kit), the same mechanism emdash-better-auth and
- * emdash-smtp use. `settingsSchema` alone only surfaces under
- * Plugins -> manager -> Settings; an `adminPages` entry plus this `admin` route
- * gives the plugin its own sidebar link. Values are stored as `settings:<key>`
+ * Sidebar settings page (Block Kit), the only editor for these settings. It validates the whole form before
+ * saving, so the auto-generated form (`settingsSchema`) is deliberately not declared: it would write values that
+ * skip that validation. An `adminPages` entry plus this `admin` route gives the plugin its own sidebar link. Values are stored as `settings:<key>`
  * in kv, exactly where `loadSettings()` in runtime.ts reads them.
  *
  * Authorization: the route is NOT public, so EmDash gates it behind the admin
  * session (default permission `plugins:manage`).
  */
 import { purgeExpired } from "./purge.js";
+import { isBannerPosition, BANNER_POSITIONS } from "./presentation.js";
+import { isLanguageSetting } from "./locale.js";
+import { parseAllowedHosts, parseServices } from "./services.js";
+import { readAllSettings } from "./settings.js";
+import type { RouteContext } from "./context.js";
 import { SETTINGS_DEFAULTS } from "./shared.js";
 
 export const ADMIN_PAGE_PATH = "/settings";
+const EXPORT_PATH = "/_emdash/api/plugins/emdash-privacy/consent-export";
 const SAVE_ACTION = "save_privacy";
 const PURGE_ACTION = "purge_now";
 
@@ -22,7 +27,7 @@ interface Interaction {
 }
 
 /** Same host-derived tenant key the /save route writes. */
-function siteHost(ctx: any): string {
+function siteHost(ctx: RouteContext): string {
 	try {
 		return new URL(ctx.site?.url ?? ctx.request?.url).hostname;
 	} catch {
@@ -30,32 +35,61 @@ function siteHost(ctx: any): string {
 	}
 }
 
-async function readKv<T>(ctx: any, key: string): Promise<T | undefined> {
-	return ((await ctx.kv.get(`settings:${key}`)) ?? undefined) as T | undefined;
+/**
+ * Block Kit external links must be absolute. `ctx.url()` is only absolute when the site
+ * URL is configured, so fall back to the origin of the admin request itself.
+ */
+function absoluteUrl(ctx: RouteContext, path: string): string {
+	const viaSite = typeof ctx.url === "function" ? ctx.url(path) : path;
+	if (/^https?:\/\//i.test(viaSite)) return viaSite;
+	try {
+		return new URL(path, ctx.request?.url).toString();
+	} catch {
+		return viaSite;
+	}
 }
 
-async function buildPage(ctx: any, toast?: { message: string; type: "success" | "error" }) {
+async function buildPage(ctx: RouteContext, toast?: { message: string; type: "success" | "error" }) {
 	const d = SETTINGS_DEFAULTS;
+	const all = await readAllSettings(ctx); // one query for every setting
+	const pick = <T>(key: string, fallback: T): T => (all[key] === undefined || all[key] === null ? fallback : (all[key] as T));
 	const v = {
-		enabled: (await readKv<boolean>(ctx, "enabled")) ?? d.enabled,
-		services: (await readKv<string>(ctx, "services")) ?? d.services,
-		language: (await readKv<string>(ctx, "language")) ?? d.language,
-		colorScheme: (await readKv<string>(ctx, "colorScheme")) ?? d.colorScheme,
-		accentColor: (await readKv<string>(ctx, "accentColor")) ?? "",
-		requireChoice: (await readKv<boolean>(ctx, "requireChoice")) ?? d.requireChoice,
-		privacyUrl: (await readKv<string>(ctx, "privacyUrl")) ?? "",
-		imprintUrl: (await readKv<string>(ctx, "imprintUrl")) ?? "",
-		cookieUrl: (await readKv<string>(ctx, "cookieUrl")) ?? "",
-		policyVersion: (await readKv<string>(ctx, "policyVersion")) ?? d.policyVersion,
-		cookieMaxAgeMonths: (await readKv<number>(ctx, "cookieMaxAgeMonths")) ?? d.cookieMaxAgeMonths,
-		retentionMonths: (await readKv<number>(ctx, "retentionMonths")) ?? d.retentionMonths,
+		enabled: pick("enabled", d.enabled),
+		services: pick("services", d.services),
+		allowedScriptHosts: pick("allowedScriptHosts", d.allowedScriptHosts),
+		language: pick("language", d.language),
+		colorScheme: pick("colorScheme", d.colorScheme),
+		bannerPosition: pick("bannerPosition", d.bannerPosition),
+		accentColor: pick("accentColor", ""),
+		requireChoice: pick("requireChoice", d.requireChoice),
+		privacyUrl: pick("privacyUrl", ""),
+		imprintUrl: pick("imprintUrl", ""),
+		cookieUrl: pick("cookieUrl", ""),
+		policyVersion: pick("policyVersion", d.policyVersion),
+		cookieMaxAgeMonths: pick("cookieMaxAgeMonths", d.cookieMaxAgeMonths),
+		retentionMonths: pick("retentionMonths", d.retentionMonths),
 	};
 	const siteId = siteHost(ctx);
 	const total = await ctx.storage.consents.count({ siteId });
+	// Stored config can still be invalid (saved before a validation rule existed, or edited in the DB).
+	// The runtime drops bad entries, so say so here rather than let the banner vanish silently.
+	const stored = parseServices(v.services, parseAllowedHosts(v.allowedScriptHosts).hosts);
+	const storedWarning = stored.errors.length
+		? [
+				{
+					type: "banner",
+					variant: "error",
+					title: "Some tracked services are invalid and are ignored",
+					description: `${stored.errors.length} problem(s), first: ${stored.errors[0]}. Fix them below and save.`,
+				},
+			]
+		: [];
+	const exportUrl = absoluteUrl(ctx, EXPORT_PATH);
 
 	return {
 		blocks: [
 			{ type: "header", text: "Privacy & cookie consent" },
+			...storedWarning,
 			{
 				type: "context",
 				text: "Consent mechanism built to meet GDPR/TDDDG requirements. Not legal advice - have the result reviewed by a lawyer. The banner only shows when at least one service is listed.",
@@ -63,6 +97,10 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 			{
 				type: "stats",
 				items: [{ label: "Consent records stored", value: String(total) }],
+			},
+			{
+				type: "context",
+				text: `Export consent records (CSV): create an API token with the admin scope in EmDash, then run: curl -H "Authorization: Bearer <your ec_pat_ token>" -o consent-export.csv ${exportUrl}`,
 			},
 			{
 				type: "form",
@@ -75,17 +113,19 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 						label: "Tracked services (JSON)",
 						multiline: true,
 						initial_value: v.services,
-						placeholder: '[{"id":"ga4","name":"Google Analytics","category":"analytics","src":"https://..."}]',
+						placeholder:
+							'[{"id":"ga4","name":"Google Analytics","category":"analytics","preset":"google-tag","options":{"id":"G-XXXXXXXX"}}]',
 					},
 					{
-						type: "select",
+						type: "text_input",
+						action_id: "allowedScriptHosts",
+						label: "Allowed script hosts (optional, comma-separated domains)",
+						initial_value: v.allowedScriptHosts,
+					},
+					{
+						type: "text_input",
 						action_id: "language",
-						label: "Banner language",
-						options: [
-							{ label: "Auto (page locale)", value: "auto" },
-							{ label: "Deutsch", value: "de" },
-							{ label: "English", value: "en" },
-						],
+						label: "Banner language: auto, or a code such as de, en, fr",
 						initial_value: v.language,
 					},
 					{
@@ -98,6 +138,13 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 							{ label: "Dark", value: "dark" },
 						],
 						initial_value: v.colorScheme,
+					},
+					{
+						type: "select",
+						action_id: "bannerPosition",
+						label: "Banner position",
+						options: BANNER_POSITIONS.map((value) => ({ label: value, value })),
+						initial_value: v.bannerPosition,
 					},
 					{ type: "text_input", action_id: "accentColor", label: "Accent color (CSS color)", initial_value: v.accentColor },
 					{
@@ -158,41 +205,77 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 	};
 }
 
-/** Validates + persists the form. Returns an error message or null. */
-async function save(ctx: any, values: Record<string, unknown>): Promise<string | null> {
-	// services must be a JSON array, or the banner would silently vanish
-	const rawServices = String(values.services ?? "[]").trim() || "[]";
+/** A policy link: a relative path or an https URL. Empty is allowed (link hidden). */
+function policyUrlError(value: string): string | null {
+	if (!value) return null;
+	if (value.startsWith("/") && !value.startsWith("//")) return null;
 	try {
-		if (!Array.isArray(JSON.parse(rawServices))) return "Services must be a JSON array.";
+		return new URL(value).protocol === "https:" ? null : "must be an https:// URL or a path starting with /";
 	} catch {
-		return "Services is not valid JSON.";
+		return "must be an https:// URL or a path starting with /";
 	}
+}
+
+/**
+ * Validates the whole form, then writes it. Nothing is written unless every field is valid,
+ * so a bad service entry cannot silently replace a working config. Returns an error or null.
+ */
+async function save(ctx: RouteContext, values: Record<string, unknown>): Promise<string | null> {
 	const str = (k: string) => (typeof values[k] === "string" ? (values[k] as string).trim() : "");
-	const num = (k: string, fallback: number) => {
-		const n = Number(values[k]);
-		return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
+	// A whole number in [min, max], or an error. Never a silent default: a retention of 0 or 100000 must not be saved.
+	const whole = (k: string, label: string, min: number, max: number): number | string => {
+		const raw = values[k];
+		const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : Number.NaN;
+		if (!Number.isInteger(n) || n < min || n > max) return `${label} must be a whole number from ${min} to ${max}.`;
+		return n;
 	};
+
+	const retention = whole("retentionMonths", "Retention", 1, 120);
+	if (typeof retention === "string") return retention;
+	const maxAge = whole("cookieMaxAgeMonths", "Re-ask period", 1, 36);
+	if (typeof maxAge === "string") return maxAge;
+
+	const hosts = parseAllowedHosts(str("allowedScriptHosts"));
+	if (hosts.error) return hosts.error;
+
+	const services = parseServices(str("services") || "[]", hosts.hosts);
+	if (services.errors.length) {
+		const shown = services.errors.slice(0, 3).join("; ");
+		return services.errors.length > 3 ? `${shown} (+${services.errors.length - 3} more)` : shown;
+	}
+
+	if (!isLanguageSetting(str("language") || "auto")) return "Language must be 'auto' or a language code such as de or en.";
+	const position = str("bannerPosition") || SETTINGS_DEFAULTS.bannerPosition;
+	if (!isBannerPosition(position)) return "Banner position is not valid.";
+
+	for (const k of ["privacyUrl", "imprintUrl", "cookieUrl"] as const) {
+		const err = policyUrlError(str(k));
+		if (err) return `${k === "privacyUrl" ? "Privacy" : k === "imprintUrl" ? "Imprint" : "Cookie"} URL ${err}.`;
+	}
+
 	const scheme = ["system", "light", "dark"].includes(str("colorScheme")) ? str("colorScheme") : "system";
 	const writes: Record<string, unknown> = {
 		enabled: values.enabled === true,
-		services: rawServices,
-		language: ["auto", "de", "en"].includes(str("language")) ? str("language") : "auto",
+		services: str("services") || "[]",
+		allowedScriptHosts: hosts.hosts.join(" "),
+		language: str("language") || "auto",
 		colorScheme: scheme,
+		bannerPosition: position,
 		accentColor: str("accentColor"),
 		requireChoice: values.requireChoice === true,
 		privacyUrl: str("privacyUrl"),
 		imprintUrl: str("imprintUrl"),
 		cookieUrl: str("cookieUrl"),
 		policyVersion: str("policyVersion") || SETTINGS_DEFAULTS.policyVersion,
-		cookieMaxAgeMonths: num("cookieMaxAgeMonths", SETTINGS_DEFAULTS.cookieMaxAgeMonths),
-		retentionMonths: num("retentionMonths", SETTINGS_DEFAULTS.retentionMonths),
+		cookieMaxAgeMonths: maxAge,
+		retentionMonths: retention,
 	};
 	for (const [k, val] of Object.entries(writes)) await ctx.kv.set(`settings:${k}`, val);
 	return null;
 }
 
 export const adminRoute = {
-	handler: async (ctx: any) => {
+	handler: async (ctx: RouteContext) => {
 		const i = (ctx.input ?? {}) as Interaction;
 		if (i.type === "form_submit" && i.action_id === SAVE_ACTION) {
 			const err = await save(ctx, i.values ?? {});

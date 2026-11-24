@@ -32,7 +32,7 @@
 /** c15t optional categories this plugin drives. "analytics" is c15t `measurement`. */
 export const OPTIONAL_C15T_CATEGORIES = ["measurement", "marketing"] as const;
 
-export interface BuildPolicyInput {
+interface BuildPolicyInput {
 	/** Operator policy version. Bump = re-ask. Becomes `copyRevision`. */
 	policyVersion: string;
 	/** Re-ask after this many months (operator setting). Becomes validity days. */

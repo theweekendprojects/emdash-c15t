@@ -1,11 +1,23 @@
 /**
  * Retention purge: delete consent records older than `retentionMonths`.
- * Used by the daily cron hook and by the admin "delete expired now" button.
- * Bounded (<= 50 batches of 200) so one run can never run away.
+ * Used by the daily cron hook, by the lazy purge in `/save`, and by the admin "delete expired now" button.
  */
+import type { PluginContext } from "emdash";
 import { SETTINGS_DEFAULTS } from "./shared.js";
 
 export const DAY_MS = 86_400_000;
+
+/**
+ * EmDash caps a storage query page at 100 rows (`QueryOptions.limit`: "Default 50, max 100"). Asking for more
+ * silently returns 100, so a larger page size would delete less than it reports.
+ */
+const PURGE_PAGE_SIZE = 100;
+
+/** Pages per run. The cron and admin paths clear up to 5 000 rows per run. */
+const PURGE_MAX_PAGES = 50;
+
+/** Pages the lazy purge inside `/save` may take. It runs in a visitor's request, so it stays small: 2 000 rows. */
+export const LAZY_PURGE_MAX_PAGES = 20;
 
 /** True when a lazy purge is due: never run, or last run over a day ago. Pure; self-checked. */
 export function purgeDue(last: unknown, now: number): boolean {
@@ -20,21 +32,21 @@ export function retentionCutoff(now: number, months: unknown): number {
 }
 
 /**
- * Returns how many records were deleted. `maxBatches` bounds the work (200 rows
- * each): the cron/admin paths use the default, the lazy path inside /save uses 1.
+ * Deletes expired records, up to `maxPages` pages of `PURGE_PAGE_SIZE`. Returns how many were deleted.
+ * Each page is read from the start again, because the rows just deleted are no longer there. That needs no cursor.
  */
-export async function purgeExpired(ctx: any, maxBatches = 50): Promise<number> {
+export async function purgeExpired(ctx: PluginContext, maxPages = PURGE_MAX_PAGES): Promise<number> {
 	const months = (await ctx.kv.get("settings:retentionMonths")) as number | null;
 	const cutoff = retentionCutoff(Date.now(), months);
 	let deleted = 0;
-	for (let i = 0; i < maxBatches; i++) {
+	for (let i = 0; i < maxPages; i++) {
 		const res = await ctx.storage.consents.query({
 			where: { ts: { lt: cutoff } },
 			orderBy: { ts: "asc" },
-			limit: 200,
+			limit: PURGE_PAGE_SIZE,
 		});
 		if (!res.items.length) break;
-		await ctx.storage.consents.deleteMany(res.items.map((it: any) => it.id));
+		await ctx.storage.consents.deleteMany(res.items.map((it) => it.id));
 		deleted += res.items.length;
 		if (!res.hasMore) break;
 	}

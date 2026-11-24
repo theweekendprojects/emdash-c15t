@@ -1,33 +1,41 @@
 /**
- * Browser entry, bundled at build time into `dist/banner.<ver>.js` and served
- * by the plugin's own public asset route (no CDN). This is the only ~file of
- * real client code: it composes c15t's local (offline) policy engine with our
- * own `save` that posts a PII-free proof to the plugin's `/save` route.
+ * Browser entry, bundled at build time into `dist/banner.js` and embedded as a
+ * string by `scripts/build-client.mjs`. It is served by the plugin's own public
+ * asset route (no CDN). It composes c15t's local (offline) policy engine with our
+ * own `save`, which posts a PII-free proof to the plugin's `/save` route.
  *
- * Why compose offline + custom save, instead of a server `init`:
+ * Why offline + custom save, instead of a server `init`:
  *   c15t's init fold requires a `policyResolution` in the init response; a
  *   hand-written `init` returning only geo would make resolution fail and the
  *   banner would never show. The offline transport synthesizes a valid
- *   policyResolution locally from our policy rule — strict opt-in, no network,
+ *   policyResolution locally from our policy rule: strict opt-in, no network,
  *   nothing visitor-specific that could leak through cached HTML.
  *
  * Config is inlined by the `page:fragments` hook as `window.__emdashPrivacy`.
  */
 import { init, offline } from "@c15t/browser";
 import type { SavePayload, SaveResult } from "@c15t/core";
-import { strings } from "../strings.js";
+import { strings, imprintLabel } from "../strings.js";
+import { bundledTranslations } from "./languages.js";
+import { promptFor, triggerPosition } from "../presentation.js";
+import { pickLocale } from "../locale.js";
+import type { ServiceSpec } from "../services.js";
+import { toScript } from "./presets.js";
 
 interface PrivacyConfig {
-	locale: "de" | "en";
+	language: string | null; // candidate code from the server; null = unknown, fall back
 	colorScheme: "system" | "light" | "dark";
 	requireChoice?: boolean;
+	bannerPosition: string;
 	accentColor?: string;
 	rule: unknown; // PolicyRuleOut from rule.ts, serialized server-side
-	scripts: unknown[]; // c15t Script[] built from the services list
-	legalLinks?: { privacy?: string; cookies?: string; terms?: string };
+	services: ServiceSpec[];
+	clearOnRevocation: Partial<Record<"measurement" | "marketing", { cookies: string[] }>>;
+	legalLinks: { privacy?: string; imprint?: string; cookies?: string };
+	hidePrompt: boolean; // no banner: on policy pages, and on sites with no services (embed-only)
+	showTrigger: boolean; // the floating reopen button; off when there are no services
 	policyVersion: string;
 	bannerVersion: string;
-	nonce?: string;
 }
 
 const cfg = (window as unknown as { __emdashPrivacy?: PrivacyConfig }).__emdashPrivacy;
@@ -109,13 +117,15 @@ function buildTheme(accentColor?: string) {
 	};
 }
 
-/** Extra CSS inside the banner's shadow root: card geometry + mobile bottom sheet. */
+/**
+ * Extra CSS inside the banner's shadow root: card border and the mobile bottom
+ * sheet. Position is left to `presentation`, so the banner-position setting works.
+ */
 const SHADOW_CSS = `
-[data-testid="consent-banner-root"]{left:16px;right:auto;bottom:16px;max-width:min(440px,calc(100vw - 32px))}
 [data-testid="consent-banner-card"]{border:1px solid var(--c15t-border);backdrop-filter:saturate(1.2)}
 [data-testid="consent-banner-title"]{font-weight:650;letter-spacing:-0.01em}
 @media (max-width:640px){
-  [data-testid="consent-banner-root"]{left:0;right:0;bottom:0;max-width:none}
+  [data-testid="consent-banner-root"]{left:0;right:0;bottom:0;top:auto;max-width:none}
   [data-testid="consent-banner-card"]{border-radius:16px 16px 0 0;border-width:1px 0 0 0;width:100%}
   [data-testid="consent-banner-footer"]{flex-wrap:wrap}
 }
@@ -129,7 +139,7 @@ function routeBase(): string {
 /**
  * Our save handler. Posts the choice to the plugin route; on any non-2xx we
  * return `ok:false` so c15t keeps the choice locally and replays from its
- * outbox on a later load. We never send a site id — the server derives it
+ * outbox on a later load. We never send a site id: the server derives it
  * from the request host.
  */
 async function save(payload: SavePayload): Promise<SaveResult> {
@@ -154,46 +164,44 @@ async function save(payload: SavePayload): Promise<SaveResult> {
 	}
 }
 
-/**
- * Google Consent Mode v2 bridge. Only active when a configured service is a
- * Google tag. Order matters: `default` (all denied) is queued BEFORE the tag can
- * load, then `update` follows the real permissions on ready + every change.
- * The tag itself stays gated (BASIC mode): it does not load before consent, so
- * no ping leaves the browser. Mapping: analytics_storage <- measurement;
- * ad_storage / ad_user_data / ad_personalization <- marketing.
- */
-const GOOGLE_SRC = /googletagmanager\.com|google-analytics\.com|googleadservices\.com|doubleclick\.net/;
-function consentModeBridge(
-	client: { on: (e: "ready" | "consent", l: (s: any) => void) => unknown; getSnapshot: () => any },
-	scripts: unknown[],
-): void {
-	if (!scripts.some((x) => GOOGLE_SRC.test(String((x as { src?: string }).src ?? "")))) return;
-	const w = window as unknown as { dataLayer?: unknown[]; gtag?: (...a: unknown[]) => void };
-	w.dataLayer = w.dataLayer || [];
-	// gtag must push the `arguments` object (not an array); Google's tag reads it that way
-	w.gtag =
-		w.gtag ||
-		function () {
-			// eslint-disable-next-line prefer-rest-params
-			(w.dataLayer as unknown[]).push(arguments);
-		};
-	const g = w.gtag!;
-	g("consent", "default", {
-		ad_storage: "denied",
-		ad_user_data: "denied",
-		ad_personalization: "denied",
-		analytics_storage: "denied",
-		wait_for_update: 500,
+/** Recursive merge of plain objects; `b` wins. Used to layer our wording over the bundled copy. */
+function merge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
+	const out: Record<string, unknown> = { ...a };
+	for (const [k, v] of Object.entries(b)) {
+		const base = out[k];
+		out[k] =
+			v && typeof v === "object" && !Array.isArray(v) && base && typeof base === "object"
+				? merge(base as Record<string, unknown>, v as Record<string, unknown>)
+				: v;
+	}
+	return out;
+}
+
+/** Bundled c15t copy, with our de/en wording layered on top. */
+function messagesWithOverrides(): Record<string, unknown> {
+	const all: Record<string, unknown> = { ...bundledTranslations };
+	for (const lang of ["de", "en"] as const) {
+		all[lang] = merge(bundledTranslations[lang] ?? {}, strings[lang] as Record<string, unknown>);
+	}
+	return all;
+}
+
+/** Clear-on-revocation config in the shape c15t takes. */
+function clearOnRevocationFor(map: PrivacyConfig["clearOnRevocation"]) {
+	const out: Record<string, { cookies: string[] }> = {};
+	for (const key of ["measurement", "marketing"] as const) if (map[key]) out[key] = map[key]!;
+	return out;
+}
+
+/** Clicks on any `[data-emdash-privacy-open]` element open the preference dialog (the embed placeholders use this). */
+function wireOpenButtons(client: { openDialog: () => unknown }): void {
+	document.addEventListener("click", (event) => {
+		const target = event.target as Element | null;
+		const trigger = target?.closest?.("[data-emdash-privacy-open]");
+		if (!trigger) return;
+		event.preventDefault();
+		void client.openDialog();
 	});
-	const push = (snap: any) => {
-		const p = snap?.effectivePermissions ?? {};
-		const a = p.measurement ? "granted" : "denied";
-		const m = p.marketing ? "granted" : "denied";
-		g("consent", "update", { analytics_storage: a, ad_storage: m, ad_user_data: m, ad_personalization: m });
-	};
-	push(client.getSnapshot());
-	client.on("ready", push);
-	client.on("consent", push);
 }
 
 function start(config: PrivacyConfig): void {
@@ -209,63 +217,54 @@ function start(config: PrivacyConfig): void {
 		{ kind: "custom" as const },
 	);
 
+	// Language: a configured or page language if it is bundled, else German.
+	const locale = pickLocale(config.language, Object.keys(bundledTranslations));
+
 	// set the scheme class BEFORE c15t mounts, so there is no wrong-scheme flash
 	if (config.colorScheme === "system") followPageScheme();
 
-	// requireChoice (operator setting, default off): a blocking "consent wall"
-	// (dim overlay + scroll lock, like many German sites) vs the default
-	// non-modal floating card that leaves the site usable before a choice.
-	const blocking = config.requireChoice === true;
+	// requireChoice (operator setting, default off): a centred blocking wall, vs the
+	// default non-modal card that leaves the site usable before a choice.
+	const prompt = promptFor(config.bannerPosition, config.requireChoice === true);
+	const legal = config.legalLinks;
+	const legalKeys = [legal.privacy && "privacyPolicy", legal.cookies && "cookiePolicy", legal.imprint && "termsOfService"].filter(
+		Boolean,
+	) as ("privacyPolicy" | "cookiePolicy" | "termsOfService")[];
+	const legalLinks = {
+		...(legal.privacy ? { privacyPolicy: { href: legal.privacy } } : {}),
+		...(legal.cookies ? { cookiePolicy: { href: legal.cookies } } : {}),
+		...(legal.imprint ? { termsOfService: { href: legal.imprint, label: imprintLabel(locale) } } : {}),
+	};
 
 	const client = init({
 		mode,
-		nonce: config.nonce,
 		ui: {
 			// null = follow the <html> `c15t-dark` class live (kept in sync by
 			// followPageScheme). An explicit operator choice is fixed.
 			colorScheme: config.colorScheme === "system" ? null : config.colorScheme,
 			theme: buildTheme(config.accentColor) as never,
 			css: SHADOW_CSS,
-			// Default: no overlay, no scroll lock, so Impressum/Datenschutz stay
-			// readable before a choice. `requireChoice` dims and locks instead.
-			banner: { hideBranding: true, scrollLock: blocking },
-			dialog: { hideBranding: true },
-			// Floating reopen button = the "Cookie-Einstellungen" control (FR7).
-			trigger: { position: "bottom-left", showWhen: "after-consent" },
-		},
-		// Follow the PAGE locale (set server-side), never the browser language.
-		i18n: { locale: config.locale, messages: strings as never, detectBrowserLanguage: false },
-		// our two optional categories map to c15t measurement + marketing
-		consentCategories: ["necessary", "measurement", "marketing"],
-		scripts: config.scripts as never,
-		legalLinks: config.legalLinks as never,
-		reloadOnConsentRevoked: true,
-		// Accept and Reject are BOTH primary: equal prominence, no dark pattern.
-		// Settings is the quiet third action. Default is a non-blocking floating
-		// card; `requireChoice` makes it a centered wall that blocks the page.
-		presentation: {
-			prompt: blocking
+			// Policy pages show no banner, so the text stays readable. Other pages show it
+			// until the visitor chooses. The reopen button stays on every page.
+			banner: config.hidePrompt ? false : { hideBranding: true, legalLinks: legalKeys },
+			dialog: { hideBranding: true, legalLinks: legalKeys },
+			trigger: config.showTrigger
 				? {
-						variant: "wall",
-						position: "center",
-						primaryActions: ["accept", "reject"],
-						layout: [["reject", "accept"], ["customize"]],
-						blocking: true,
+						position: triggerPosition(config.bannerPosition),
+						showWhen: config.hidePrompt ? "always" : "after-consent",
 					}
-				: {
-						variant: "floating",
-						position: "bottom-left",
-						primaryActions: ["accept", "reject"],
-						layout: [["reject", "accept"], ["customize"]],
-						blocking: false,
-					},
+				: false,
 		},
+		// Messages for every bundled language, our de/en wording on top.
+		i18n: { locale, messages: messagesWithOverrides() as never, detectBrowserLanguage: false },
+		consentCategories: ["necessary", "measurement", "marketing"],
+		scripts: config.services.map(toScript),
+		clearOnRevocation: clearOnRevocationFor(config.clearOnRevocation) as never,
+		legalLinks: legalLinks as never,
+		reloadOnConsentRevoked: true,
+		presentation: { prompt },
 	});
-	// init() already mounts the UI with the `ui` options above. A second
-	// mountConsentUI(client) call mounts a duplicate default UI (white, branded)
-	// on top of it - seen live.
-	// footer "Cookie-Einstellungen" control reopens preferences
-	consentModeBridge(client as never, config.scripts);
+	wireOpenButtons(client as never);
 	(window as unknown as { emdashPrivacy?: unknown }).emdashPrivacy = client;
 }
 

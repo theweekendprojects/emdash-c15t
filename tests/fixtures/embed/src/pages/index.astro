@@ -1,0 +1,11 @@
+---
+// Built by tests/embed.test.ts with the repo's own Astro. The import reaches the real component.
+import ConsentEmbed from "../../../../../src/components/ConsentEmbed.astro";
+---
+<html lang="en">
+  <body>
+    <ConsentEmbed provider="youtube" id="dQw4w9WgXcQ" title="Demo" lang="en" />
+    <ConsentEmbed provider="vimeo" id="123456789" title="Talk" category="analytics" />
+    <ConsentEmbed provider="youtube" id="bad" title="Invalid" />
+  </body>
+</html>
