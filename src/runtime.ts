@@ -17,6 +17,7 @@ import type { RouteContext } from "./context.js";
 import { z } from "zod";
 import { adminRoute } from "./admin-page.js";
 import { readAllSettings } from "./settings.js";
+import { siteIdFrom } from "./site-id.js";
 import { consentCsvLine, csvHeaderLine, type ConsentRecord } from "./export.js";
 import { isSameOriginRequest, safeInlineJson } from "./security.js";
 import { LAZY_PURGE_MAX_PAGES, purgeDue, purgeExpired } from "./purge.js";
@@ -118,13 +119,7 @@ async function loadSettings(ctx: PluginContext) {
 // ── host-derived site id (never trust the payload) ────────────────────────────
 
 function siteIdFromCtx(ctx: { site?: { url?: string }; request?: { url?: string } }): string {
-	// Prefer the host-attested site URL; fall back to the request host. An empty string fails to parse below.
-	const raw = ctx.site?.url ?? ctx.request?.url ?? "";
-	try {
-		return new URL(raw).hostname;
-	} catch {
-		return "unknown";
-	}
+	return siteIdFrom(ctx.site?.url, ctx.request?.url);
 }
 
 // ── routes ────────────────────────────────────────────────────────────────────

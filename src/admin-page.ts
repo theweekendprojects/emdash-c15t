@@ -12,6 +12,7 @@ import { isBannerPosition, BANNER_POSITIONS } from "./presentation.js";
 import { isLanguageSetting } from "./locale.js";
 import { parseAllowedHosts, parseServices } from "./services.js";
 import { readAllSettings } from "./settings.js";
+import { siteIdFrom } from "./site-id.js";
 import type { RouteContext } from "./context.js";
 import { SETTINGS_DEFAULTS } from "./shared.js";
 
@@ -28,11 +29,7 @@ interface Interaction {
 
 /** Same host-derived tenant key the /save route writes. */
 function siteHost(ctx: RouteContext): string {
-	try {
-		return new URL(ctx.site?.url ?? ctx.request?.url).hostname;
-	} catch {
-		return "unknown";
-	}
+	return siteIdFrom(ctx.site?.url, ctx.request?.url);
 }
 
 /**

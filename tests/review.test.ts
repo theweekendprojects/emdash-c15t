@@ -178,3 +178,16 @@ describe("admin reachability", () => {
 		expect(res.status).toBe(403);
 	});
 });
+
+describe("live finding: the site id falls back to the request host when the site URL is empty", () => {
+	// Found on the staging Worker: ctx.site.url is "" there, so `??` did not fall through and every record was stored as "unknown".
+	it("stores the request's host as siteId when the site URL is empty", async () => {
+		const bare = await createRuntime("");
+		runtimes.push(bare);
+		await adminCall(bare, { type: "form_submit", action_id: "save_privacy", values: values() });
+		const res = await call(bare, "save", { method: "POST", headers: SAME_ORIGIN, body: savePayload({ subjectId: "bare" }) });
+		expect(res.status).toBe(200);
+		const row = rawDb().prepare("SELECT data FROM _plugin_storage WHERE collection = 'consents' ORDER BY created_at DESC LIMIT 1").get() as { data: string };
+		expect(JSON.parse(row.data).siteId).toBe("site.example");
+	});
+});
