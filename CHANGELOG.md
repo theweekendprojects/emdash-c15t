@@ -26,6 +26,8 @@ Known limits: cron hook unreliable on the tested host; strict CSP needs `script-
 isolation depends on the platform's plugin-storage isolation and was not exercised on a multi-site host.
 
 ## Unreleased
+- **Renamed the npm package** from `emdash-privacy` to `emdash-c15t`. The plugin id (`emdash-privacy`), routes and
+  stored data are unchanged, so existing sites need no change. `emdash-privacy@0.1.0` stays on npm and should be deprecated.
 Implements the gap plan in `docs/consent-feature-plan.md`. Reuses the official c15t APIs and integrations.
 - **Cookie cleanup on withdrawal** (`clearOnRevocation`). Presets carry their known cookies, and entries can
   list their own.
@@ -42,7 +44,7 @@ Implements the gap plan in `docs/consent-feature-plan.md`. Reuses the official c
 - **Languages**: `auto` or a code. Bundled languages are German and English; anything else falls back to German.
   The old rule "anything not English gets German" is now "anything not bundled gets German". Add languages in
   `src/client/languages.ts`.
-- **Embed component** `emdash-privacy/embed` (`ConsentEmbed.astro`): YouTube and Vimeo that wait for consent.
+- **Embed component** `emdash-c15t/embed` (`ConsentEmbed.astro`): YouTube and Vimeo that wait for consent.
 - **CSV export** of consent records, admin only, with formula-injection escaping.
 - **Public API** documented: `window.emdashPrivacy` (c15t client methods).
 - **Fixes**: legal links used the wrong c15t keys and never rendered; `scrollLock` replaced by

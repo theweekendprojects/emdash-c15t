@@ -1,5 +1,5 @@
 /**
- * emdash-privacy — per-site GDPR/TDDDG cookie consent for EmDash CMS.
+ * emdash-c15t — per-site GDPR/TDDDG cookie consent for EmDash CMS, built on c15t.
  *
  * A trusted, standard-format EmDash plugin (shipped as an npm package, using
  * only the standard plugin APIs). It injects a c15t-powered consent banner on
@@ -14,7 +14,7 @@
  * @example
  * ```ts
  * // astro.config.mjs (or live.config.ts)
- * import { privacyPlugin } from "emdash-privacy";
+ * import { privacyPlugin } from "emdash-c15t";
  *
  * emdash({ plugins: [privacyPlugin()] });
  * ```
@@ -23,19 +23,12 @@ import type { PluginDescriptor } from "emdash";
 import { definePlugin } from "emdash";
 import { version } from "../package.json" with { type: "json" };
 import { ADMIN_PAGE_PATH } from "./admin-page.js";
-import { PLUGIN_ID, SETTINGS_SCHEMA, STORAGE_CONFIG } from "./shared.js";
+import { PACKAGE_NAME, PLUGIN_ID, SETTINGS_SCHEMA, STORAGE_CONFIG } from "./shared.js";
 import { consentRoutes, privacyHooks } from "./runtime.js";
 
-export { PLUGIN_ID, BANNER_VERSION, CATEGORIES } from "./shared.js";
+export { PACKAGE_NAME, PLUGIN_ID, BANNER_VERSION, CATEGORIES } from "./shared.js";
 export { buildPolicyRule } from "./rule.js";
 
-/**
- * The published npm package name. EmDash resolves the descriptor `entrypoint`
- * as a module specifier at the consuming site's build time (Astro → Vite), so
- * it MUST equal this package's real name. Rename in ONE place (here +
- * package.json "name") if the package is ever forked.
- */
-export const PACKAGE_NAME = "emdash-privacy";
 
 /**
  * Build-time descriptor, registered in the site's `plugins: []`. `format:

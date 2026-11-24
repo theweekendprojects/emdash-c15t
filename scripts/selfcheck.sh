@@ -22,6 +22,8 @@ if [ ! -x "$ROOT/node_modules/.bin/esbuild" ]; then
 	exit 1
 fi
 
+export PLUGIN_ROOT="$ROOT"
+
 for check in "$ROOT"/src/*.selfcheck.ts; do
 	name="$(basename "$check" .ts)"
 	"$ROOT/node_modules/.bin/esbuild" "$check" \

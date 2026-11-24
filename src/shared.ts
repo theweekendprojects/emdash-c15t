@@ -5,8 +5,14 @@
 import type { SettingField } from "emdash";
 import { BANNER_POSITIONS } from "./presentation.js";
 
-/** Plugin id. Also the storage namespace and the public route prefix. */
+/** Plugin id. Also the storage namespace and the public route prefix. Kept at the original name so existing data and routes keep working. */
 export const PLUGIN_ID = "emdash-privacy";
+
+/**
+ * The published npm package name. EmDash resolves the descriptor `entrypoint` as a module specifier at the
+ * consuming site's build time, so this MUST equal package.json "name" (guards.selfcheck.ts enforces it).
+ */
+export const PACKAGE_NAME = "emdash-c15t";
 
 /**
  * Banner asset version. Bump when the shipped `dist/banner.js` changes so the

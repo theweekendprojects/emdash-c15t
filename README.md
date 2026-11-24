@@ -1,4 +1,8 @@
-# emdash-privacy
+# emdash-c15t
+
+> Previously published as `emdash-privacy` (0.1.0). The plugin id, routes and stored data keep the `emdash-privacy` name, so existing sites need no change. Only the npm package name moved.
+
+Not affiliated with or endorsed by c15t or EmDash.
 
 Per-site cookie consent for [EmDash CMS](https://emdashcms.com), built to meet GDPR / TDDDG requirements.
 A themed banner (German and English, plus any language you bundle) that follows your site's design and light/dark mode, with Google
@@ -42,12 +46,12 @@ stored in your own Cloudflare D1. No third-party consent backend, no CDN, no pai
 ## Install
 
 ```bash
-npm install emdash-privacy
+npm install emdash-c15t
 ```
 
 ```ts
 // astro.config.mjs
-import { privacyPlugin } from "emdash-privacy";
+import { privacyPlugin } from "emdash-c15t";
 
 emdash({
   plugins: [privacyPlugin()],
@@ -147,7 +151,7 @@ The public `GET /_emdash/api/plugins/emdash-privacy/services` route returns the 
 
 ```astro
 ---
-import ConsentEmbed from "emdash-privacy/embed";
+import ConsentEmbed from "emdash-c15t/embed";
 ---
 <ConsentEmbed provider="youtube" id="dQw4w9WgXcQ" title="Product demo" lang="en" />
 ```

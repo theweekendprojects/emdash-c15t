@@ -10,6 +10,8 @@ import { consentCsvLine, csvCell, csvHeaderLine } from "./export.js";
 import { isPolicyPage, promptFor, triggerPosition } from "./presentation.js";
 import { languageCandidate, isLanguageSetting, pickLocale } from "./locale.js";
 import { embedUrl } from "./embed-url.js";
+import { PACKAGE_NAME, PLUGIN_ID } from "./shared.js";
+import { readFileSync } from "node:fs";
 
 const ok = (raw: unknown, hosts: string[] = []) => {
 	const r = parseServices(raw, hosts);
@@ -137,6 +139,13 @@ assert.equal(isSameOriginRequest(real({ origin: SITE }).headers, REQ, SITE), tru
 assert.equal(isSameOriginRequest(real({ origin: "https://evil.example" }).headers, REQ, SITE), false, "Headers: cross-origin refused");
 assert.equal(isSameOriginRequest(real({ "sec-fetch-site": "same-origin" }).headers, REQ, SITE), true, "Headers: Sec-Fetch-Site same-origin ok");
 assert.equal(isSameOriginRequest(real({}).headers, REQ, SITE), false, "Headers: no origin info refused");
+
+// --- package identity: EmDash resolves the descriptor entrypoint by the package name ---
+// the bundle runs from a temp dir, so the repo root comes from the environment (set by selfcheck.sh)
+const root = process.env.PLUGIN_ROOT ?? process.cwd();
+const pkg = JSON.parse(readFileSync(`${root}/package.json`, "utf8")) as { name: string; plugin?: { id?: string } };
+assert.equal(PACKAGE_NAME, pkg.name, "PACKAGE_NAME must equal package.json name");
+assert.equal(PLUGIN_ID, pkg.plugin?.id, "plugin id must equal package.json plugin.id");
 
 // --- inline JSON cannot close the <script> tag ---
 const json = safeInlineJson({ name: "</script><img src=x onerror=alert(1)>", x: "\u2028" });
