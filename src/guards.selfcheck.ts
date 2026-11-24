@@ -131,6 +131,13 @@ assert.equal(isSameOriginRequest({ "sec-fetch-site": "none" }, REQ, SITE), false
 assert.equal(isSameOriginRequest({}, REQ, SITE), false, "no origin info refused");
 assert.equal(isSameOriginRequest({ origin: SITE }, "not a url", undefined), false, "garbage request url does not crash");
 
+// a trusted plugin route gets a real Request: headers is a Headers object, not a record
+const real = (h: Record<string, string>) => new Request(REQ, { method: "POST", headers: h });
+assert.equal(isSameOriginRequest(real({ origin: SITE }).headers, REQ, SITE), true, "Headers: same origin allowed");
+assert.equal(isSameOriginRequest(real({ origin: "https://evil.example" }).headers, REQ, SITE), false, "Headers: cross-origin refused");
+assert.equal(isSameOriginRequest(real({ "sec-fetch-site": "same-origin" }).headers, REQ, SITE), true, "Headers: Sec-Fetch-Site same-origin ok");
+assert.equal(isSameOriginRequest(real({}).headers, REQ, SITE), false, "Headers: no origin info refused");
+
 // --- inline JSON cannot close the <script> tag ---
 const json = safeInlineJson({ name: "</script><img src=x onerror=alert(1)>", x: "\u2028" });
 assert.ok(!json.includes("</script"), "no literal </script in output");

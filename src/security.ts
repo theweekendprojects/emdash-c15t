@@ -14,7 +14,7 @@
  * them on a POST, so this only affects non-browser clients.
  */
 export function isSameOriginRequest(
-	headers: Record<string, string | undefined>,
+	headers: HeadersLike,
 	requestUrl: string,
 	siteUrl: string | undefined,
 ): boolean {
@@ -35,9 +35,16 @@ export function isSameOriginRequest(
 	return false;
 }
 
-function header(headers: Record<string, string | undefined>, name: string): string | undefined {
+/**
+ * A trusted plugin route gets a real `Request`, so `headers` is a `Headers` object
+ * (`Object.entries` on it is empty). A sandboxed route gets a plain record. Accept both.
+ */
+export type HeadersLike = Headers | Record<string, string | undefined>;
+
+function header(headers: HeadersLike, name: string): string | undefined {
+	if (typeof (headers as Headers).get === "function") return (headers as Headers).get(name) ?? undefined;
 	const lower = name.toLowerCase();
-	for (const [key, value] of Object.entries(headers)) {
+	for (const [key, value] of Object.entries(headers as Record<string, string | undefined>)) {
 		if (key.toLowerCase() === lower && typeof value === "string") return value;
 	}
 	return undefined;

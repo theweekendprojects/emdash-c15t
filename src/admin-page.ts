@@ -34,6 +34,20 @@ function siteHost(ctx: any): string {
 	}
 }
 
+/**
+ * Block Kit external links must be absolute. `ctx.url()` is only absolute when the site
+ * URL is configured, so fall back to the origin of the admin request itself.
+ */
+function absoluteUrl(ctx: any, path: string): string {
+	const viaSite = typeof ctx.url === "function" ? ctx.url(path) : path;
+	if (/^https?:\/\//i.test(viaSite)) return viaSite;
+	try {
+		return new URL(path, ctx.request?.url).toString();
+	} catch {
+		return viaSite;
+	}
+}
+
 async function readKv<T>(ctx: any, key: string): Promise<T | undefined> {
 	return ((await ctx.kv.get(`settings:${key}`)) ?? undefined) as T | undefined;
 }
@@ -58,7 +72,7 @@ async function buildPage(ctx: any, toast?: { message: string; type: "success" | 
 	};
 	const siteId = siteHost(ctx);
 	const total = await ctx.storage.consents.count({ siteId });
-	const exportUrl = typeof ctx.url === "function" ? ctx.url(EXPORT_PATH) : EXPORT_PATH;
+	const exportUrl = absoluteUrl(ctx, EXPORT_PATH);
 
 	return {
 		blocks: [
