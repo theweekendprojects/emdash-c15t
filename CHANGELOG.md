@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+- **Owner download link.** The Privacy settings page has a "Download consent records (CSV)" link. It needs no API
+  token and works from a normal browser click. The link is signed, expires after 15 minutes, and is made fresh on every
+  page load. A From/To form makes a link for part of the history; a bad range shows an error and no link. The API-token
+  route stays for automation, and both produce the same file.
+- **Documented limit: strict Content Security Policy.** The banner does not run under `script-src 'self'` without
+  `'unsafe-inline'`. The README now says what a CSP site must allow, and why.
+
 ## 0.1.0
 
 First usable release. Verified end to end on a live EmDash site (Cloudflare Workers + D1).

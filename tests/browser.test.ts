@@ -25,6 +25,16 @@ const SERVICES = JSON.stringify([
 
 /** Button labels: English on English pages, German on the fallback. Either is a banner. */
 const ACCEPT = ["Accept all", "Alle akzeptieren"];
+
+/** Content Security Policies for the documented cases (README, Operating notes). Other paths send no policy. */
+const CSP_BY_PATH: Record<string, string> = {
+	// strict: no inline script, no blob import. The banner must not run (a known, documented limit).
+	"/csp-strict": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+	// what the README asks for: inline loader plus blob: for the bundle import. The banner must run.
+	"/csp-inline-blob": "default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+	// inline without blob: the loader cannot import the bundle. The banner must not run.
+	"/csp-inline-only": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+};
 const REJECT = ["Reject all", "Alle ablehnen"];
 
 let server: Server;
@@ -77,8 +87,11 @@ beforeAll(async () => {
 			}>;
 			const head = fragments.find((f) => f.placement === "head")?.code ?? "";
 			const loader = fragments.find((f) => f.placement === "body:end")?.code ?? "";
+			const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" };
+			const csp = CSP_BY_PATH[url.pathname];
+			if (csp) headers["content-security-policy"] = csp;
 			res
-				.writeHead(200, { "content-type": "text/html; charset=utf-8" })
+				.writeHead(200, headers)
 				.end(
 					`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${url.pathname}</title>
 <script>${head}</script></head>
@@ -433,4 +446,44 @@ describe("review: bundle cache integrity and embed-only sites", () => {
 			});
 		}
 	}, 90_000);
+});
+
+describe("content security policy (documented limits)", () => {
+	/** Loads a page and waits a fixed time, for cases where the banner must NOT appear (openPage waits for it). */
+	async function visitAndWait(path: string) {
+		const context = await browser.newContext();
+		await context.route("**/*", (route) => {
+			const url = route.request().url();
+			if (url.startsWith(origin)) return route.continue();
+			return route.fulfill({ status: 204, body: "" });
+		});
+		const page = await context.newPage();
+		const consoleErrors: string[] = [];
+		page.on("console", (m) => {
+			if (m.type() === "error") consoleErrors.push(m.text());
+		});
+		await page.goto(`${origin}${path}`, { waitUntil: "load" });
+		await page.waitForTimeout(5000);
+		return { context, page, consoleErrors };
+	}
+
+	it("a strict policy (script-src 'self') blocks the loader, so no banner, and the browser reports the violation", async () => {
+		const { context, page, consoleErrors } = await visitAndWait("/csp-strict");
+		expect(await shadowText(page)).not.toMatch(/Accept all|Alle akzeptieren/);
+		expect(consoleErrors.some((e) => /Content Security Policy/i.test(e))).toBe(true);
+		await context.close();
+	}, 60_000);
+
+	it("inline script plus blob: (what the README asks for) runs the banner", async () => {
+		const { context, consoleErrors } = await openPage("/csp-inline-blob");
+		expect(consoleErrors.filter((e) => /Content Security Policy/i.test(e))).toEqual([]);
+		await context.close();
+	}, 60_000);
+
+	it("inline script without blob: cannot import the bundle, so no banner", async () => {
+		const { context, page, consoleErrors } = await visitAndWait("/csp-inline-only");
+		expect(await shadowText(page)).not.toMatch(/Accept all|Alle akzeptieren/);
+		expect(consoleErrors.some((e) => /Content Security Policy/i.test(e))).toBe(true);
+		await context.close();
+	}, 60_000);
 });

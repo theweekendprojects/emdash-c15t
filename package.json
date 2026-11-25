@@ -1,6 +1,6 @@
 {
   "name": "emdash-c15t",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Per-site GDPR/TDDDG cookie consent for EmDash CMS: a themed, dark/light consent banner (DE/EN) that follows your site's design, with Google Consent Mode v2 and GPC, powered by c15t. Consent proof is stored in your own D1, no third-party backend.",
   "type": "module",
   "license": "MIT",

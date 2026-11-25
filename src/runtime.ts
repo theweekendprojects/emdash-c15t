@@ -19,7 +19,8 @@ import { adminRoute } from "./admin-page.js";
 import { readAllSettings } from "./settings.js";
 import { siteIdFrom } from "./site-id.js";
 import { consentCsvLine, csvHeaderLine, type ConsentRecord } from "./export.js";
-import { parseExportRange, rangeWhere } from "./export-range.js";
+import { parseExportRange, rangeWhere, type ExportRange } from "./export-range.js";
+import { checkExportLink, DOWNLOAD_ROUTE, exportSecret } from "./export-link.js";
 import { isSameOriginRequest, safeInlineJson } from "./security.js";
 import { LAZY_PURGE_MAX_PAGES, PURGE_PAGE_SIZE, purgeDue, purgeExpired } from "./purge.js";
 import { isPolicyPage } from "./presentation.js";
@@ -167,6 +168,50 @@ type SaveInput = z.infer<typeof saveSchema>;
 // `/_emdash/api/` path, so the FIRST visit per browser still runs the Worker;
 // the head `preload` starts that fetch early.
 
+/**
+ * The consent CSV for a range, or the 413 hint when it is too big for one download. Shared by the owner's download link
+ * and the API-token route, so both give the same file.
+ */
+async function exportResponse(ctx: RouteContext, range: ExportRange): Promise<ReturnType<typeof pluginResponse>> {
+	const lines = [csvHeaderLine()];
+	let bytes = lines[0]!.length + 2;
+	let cursor: string | undefined;
+	// No orderBy: EmDash then pages in (created_at, id) order using the table's own index. A JSON orderBy defeats the
+	// index and made every page re-sort the whole history (7 000 rows took 13 s). Records are stored in arrival order,
+	// so this is chronological.
+	do {
+		const page = await ctx.storage.consents.query({ where: rangeWhere(range), limit: PURGE_PAGE_SIZE, cursor });
+		for (const item of page.items) {
+			const line = consentCsvLine(item.data as ConsentRecord);
+			bytes += line.length + 2;
+			// EmDash refuses a raw response over 8 MiB. Fail clearly before building it, never return a shortened file.
+			if (bytes > EXPORT_MAX_BYTES) {
+				return pluginResponse({
+					status: 413,
+					headers: { "content-type": "text/plain; charset=utf-8" },
+					body: {
+						kind: "text",
+						value:
+							"This export is too large for one download. Export it in parts with from and to, for example " +
+							"?from=2026-01-01&to=2026-07-01 (from is included, to is not).\n",
+					},
+				});
+			}
+			lines.push(line);
+		}
+		cursor = page.hasMore ? page.cursor : undefined;
+	} while (cursor);
+	return pluginResponse({
+		status: 200,
+		// Only these two are kept by EmDash's raw-response allowlist. EmDash sets nosniff and private, no-store itself.
+		headers: {
+			"content-type": "text/csv; charset=utf-8",
+			"content-disposition": 'attachment; filename="consent-export.csv"',
+		},
+		body: { kind: "text", value: `${lines.join("\r\n")}\r\n` },
+	});
+}
+
 export const consentRoutes = {
 	// the banner bundle: public, GET, immutable-cached (name carries the content hash)
 	[BUNDLE_ROUTE]: {
@@ -186,43 +231,28 @@ export const consentRoutes = {
 		handler: async (ctx: RouteContext) => {
 			const range = parseExportRange(new URL(ctx.request.url).searchParams);
 			if (typeof range === "string") throw PluginRouteError.badRequest(range);
-			const lines = [csvHeaderLine()];
-			let bytes = lines[0]!.length + 2;
-			let cursor: string | undefined;
-			// No orderBy: EmDash then pages in (created_at, id) order using the table's own index. A JSON orderBy defeats the
-			// index and made every page re-sort the whole history (7 000 rows took 13 s). Records are stored in arrival order,
-			// so this is chronological.
-			do {
-				const page = await ctx.storage.consents.query({ where: rangeWhere(range), limit: PURGE_PAGE_SIZE, cursor });
-				for (const item of page.items) {
-					const line = consentCsvLine(item.data as ConsentRecord);
-					bytes += line.length + 2;
-					// EmDash refuses a raw response over 8 MiB. Fail clearly before building it, never return a shortened file.
-					if (bytes > EXPORT_MAX_BYTES) {
-						return pluginResponse({
-							status: 413,
-							headers: { "content-type": "text/plain; charset=utf-8" },
-							body: {
-								kind: "text",
-								value:
-									"This export is too large for one download. Export it in parts with from and to, for example " +
-									"?from=2026-01-01&to=2026-07-01 (from is included, to is not).\n",
-							},
-						});
-					}
-					lines.push(line);
-				}
-				cursor = page.hasMore ? page.cursor : undefined;
-			} while (cursor);
-			return pluginResponse({
-				status: 200,
-				// Only these two are kept by EmDash's raw-response allowlist. EmDash sets nosniff and private, no-store itself.
-				headers: {
-					"content-type": "text/csv; charset=utf-8",
-					"content-disposition": 'attachment; filename="consent-export.csv"',
-				},
-				body: { kind: "text", value: `${lines.join("\r\n")}\r\n` },
-			});
+			return exportResponse(ctx, range);
+		},
+	},
+
+	// The owner's download link (from the Privacy settings page). Public, because a browser link cannot send the admin
+	// header. Access is the signed, expiring link itself (export-link.ts), so it needs no login.
+	[DOWNLOAD_ROUTE]: {
+		public: true,
+		response: "raw" as const,
+		handler: async (ctx: RouteContext) => {
+			const params = new URL(ctx.request.url).searchParams;
+			const check = await checkExportLink(await exportSecret(ctx.kv), params, Math.floor(Date.now() / 1000));
+			if (!check.ok) {
+				return pluginResponse({
+					status: 403,
+					headers: { "content-type": "text/plain; charset=utf-8" },
+					body: { kind: "text", value: `${check.reason}\n` },
+				});
+			}
+			const range = parseExportRange(params);
+			if (typeof range === "string") throw PluginRouteError.badRequest(range);
+			return exportResponse(ctx, range);
 		},
 	},
 

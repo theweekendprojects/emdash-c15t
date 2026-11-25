@@ -8,17 +8,20 @@
  * session (default permission `plugins:manage`).
  */
 import { purgeExpired } from "./purge.js";
+import { parseExportRange } from "./export-range.js";
+import { DOWNLOAD_ROUTE, exportLinkQuery, exportSecret, LINK_TTL_SECONDS } from "./export-link.js";
 import { isBannerPosition, BANNER_POSITIONS } from "./presentation.js";
 import { isLanguageSetting } from "./locale.js";
 import { parseAllowedHosts, parseServices } from "./services.js";
 import { readAllSettings } from "./settings.js";
 import type { RouteContext } from "./context.js";
-import { SETTINGS_DEFAULTS } from "./shared.js";
+import { PLUGIN_ID, SETTINGS_DEFAULTS } from "./shared.js";
 
 export const ADMIN_PAGE_PATH = "/settings";
 const EXPORT_PATH = "/_emdash/api/plugins/emdash-privacy/consent-export";
 const SAVE_ACTION = "save_privacy";
 const PURGE_ACTION = "purge_now";
+const EXPORT_ACTION = "prepare_export";
 
 interface Interaction {
 	type?: string;
@@ -41,7 +44,11 @@ function absoluteUrl(ctx: RouteContext, path: string): string {
 	}
 }
 
-async function buildPage(ctx: RouteContext, toast?: { message: string; type: "success" | "error" }) {
+async function buildPage(
+	ctx: RouteContext,
+	toast?: { message: string; type: "success" | "error" },
+	exportInput: { from: string; to: string } = { from: "", to: "" },
+) {
 	const d = SETTINGS_DEFAULTS;
 	const all = await readAllSettings(ctx); // one query for every setting
 	const pick = <T>(key: string, fallback: T): T => (all[key] === undefined || all[key] === null ? fallback : (all[key] as T));
@@ -89,9 +96,10 @@ async function buildPage(ctx: RouteContext, toast?: { message: string; type: "su
 				type: "stats",
 				items: [{ label: "Consent records stored", value: String(total) }],
 			},
+			...(await downloadBlocks(ctx, exportInput)),
 			{
 				type: "context",
-				text: `Export consent records (CSV): create an API token with the admin scope in EmDash, then run: curl -H "Authorization: Bearer <your ec_pat_ token>" -o consent-export.csv ${exportUrl}`,
+				text: `Automation: create an API token with the admin scope in EmDash, then run: curl -H "Authorization: Bearer <your ec_pat_ token>" -o consent-export.csv ${exportUrl}`,
 			},
 			{
 				type: "form",
@@ -265,9 +273,53 @@ async function save(ctx: RouteContext, values: Record<string, unknown>): Promise
 	return null;
 }
 
+/**
+ * The owner's download: a range form and a link to the signed CSV route. The link is valid for LINK_TTL_SECONDS and
+ * made fresh each time the page renders, so the owner can click it straight away.
+ */
+async function downloadBlocks(ctx: RouteContext, input: { from: string; to: string }) {
+	const form = {
+		type: "form",
+		fields: [
+			{ type: "text_input", action_id: "from", label: "From (optional, e.g. 2026-01-01)", initial_value: input.from },
+			{ type: "text_input", action_id: "to", label: "To (optional, not included, e.g. 2026-07-01)", initial_value: input.to },
+		],
+		submit: { label: "Create download link", action_id: EXPORT_ACTION },
+	};
+	// A bad range gets no link: the form shows the error, and a link would only lead to a 400.
+	if (typeof parseExportRange(new URLSearchParams(input)) === "string") return [form];
+	const query = await exportLinkQuery(await exportSecret(ctx.kv), input, Math.floor(Date.now() / 1000));
+	const url = absoluteUrl(ctx, `/_emdash/api/plugins/${PLUGIN_ID}/${DOWNLOAD_ROUTE}?${query}`);
+	return [
+		form,
+		{
+			type: "actions",
+			elements: [
+				{
+					type: "link",
+					label: "Download consent records (CSV)",
+					target: { kind: "external", url },
+					appearance: "primary",
+				},
+			],
+		},
+		{
+			type: "context",
+			text: `The link works for ${Math.round(LINK_TTL_SECONDS / 60)} minutes. Create a new one after that. Large exports: set from and to.`,
+		},
+	];
+}
+
 export const adminRoute = {
 	handler: async (ctx: RouteContext) => {
 		const i = (ctx.input ?? {}) as Interaction;
+		if (i.type === "form_submit" && i.action_id === EXPORT_ACTION) {
+			const from = String(i.values?.from ?? "").trim();
+			const to = String(i.values?.to ?? "").trim();
+			const range = parseExportRange(new URLSearchParams({ from, to }));
+			if (typeof range === "string") return buildPage(ctx, { message: range, type: "error" }, { from, to });
+			return buildPage(ctx, { message: "Download link created", type: "success" }, { from, to });
+		}
 		if (i.type === "form_submit" && i.action_id === SAVE_ACTION) {
 			const err = await save(ctx, i.values ?? {});
 			return buildPage(ctx, err ? { message: err, type: "error" } : { message: "Saved", type: "success" });

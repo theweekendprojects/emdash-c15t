@@ -16,12 +16,13 @@ Renaming the id would orphan existing data.
 | --- | --- | --- |
 | `src/index.ts` | `privacyPlugin()` descriptor + `definePlugin({...})` default export | build time + runtime |
 | `src/shared.ts` | `PLUGIN_ID`, `PACKAGE_NAME`, `SETTINGS_DEFAULTS`, `BANNER_VERSION` | both (pure) |
-| `src/runtime.ts` | routes (`save`, `services`, `consent-export`, asset), hooks (`page:fragments`, cron), settings load, inline loader | server |
+| `src/runtime.ts` | routes (`save`, `services`, `consent-export`, `consent-download`, asset), hooks (`page:fragments`, cron), settings load, inline loader | server |
 | `src/admin-page.ts` | Block Kit settings page: validates the whole form, then saves | server (admin) |
 | `src/services.ts` | service parsing, checks, preset table, clear-on-revocation map | pure |
 | `src/security.ts` | same-origin check, inline-JSON escaping | pure |
 | `src/export.ts` | CSV rows with formula-injection escaping | pure |
 | `src/export-range.ts` | `from`/`to` parsing for the export | pure |
+| `src/export-link.ts` | owner download links: HMAC-signed, 15-minute expiry, per-site secret in plugin KV | server (WebCrypto) |
 | `src/site-id.ts` | `siteIdFrom`: host of the site URL, else of the request | pure |
 | `src/purge.ts` | retention purge (paged, bounded) | server |
 | `src/settings.ts` | `readAllSettings` (one query for all settings) | server |
@@ -76,6 +77,12 @@ Renaming the id would orphan existing data.
 
 - **Stored time is the server's clock.** `givenAt` from the browser is accepted and ignored.
 - **Export is never truncated.** Over the size limit it answers 413 with the `from`/`to` hint. `from` is included, `to` is not.
+- **Owner download links are public and signed.** A browser link can't send `X-EmDash-Request`, so `consent-download` is a
+  public raw route. Its only check is the HMAC over `from`, `to` and `exp`, with a secret created once in plugin KV. Changing
+  any of them, or going past `exp`, fails. A link is made fresh on every admin page load. Don't loosen this route without a
+  replacement check: it returns every consent record for the range.
+- **Strict CSP is a documented limit.** The loader is an inline script and imports from `blob:`. EmDash refuses JS from
+  plugin routes and gives fragments no nonce, so a site with `script-src 'self'` gets no banner. README says what to allow.
 - **Save while disabled** returns `{ok: true, stored: false}`. An error would make c15t retry the save forever.
 - **Embed-only sites** (no services) still start c15t with the banner hidden and no reopen button. Otherwise a
   `ConsentEmbed` placeholder could not open the dialog.
@@ -108,7 +115,7 @@ test serves the real runtime output and the real bundle, and intercepts vendor r
 ## Release checklist
 
 1. `npm run build:client`, `npm run typecheck`, `npm run selfcheck`, `npm test`. All green on Node 22.23.5.
-2. `npm pack --dry-run`: 23 files, including `THIRD_PARTY_LICENSES.md`, no `*.selfcheck.ts`, no `tests/`.
+2. `npm pack --dry-run`: 28 files, including `THIRD_PARTY_LICENSES.md`, no `*.selfcheck.ts`, no `tests/`.
 3. `npm audit --omit=dev` is clean. Dev findings are acceptable only when they are dev tooling and fixed upstream.
 4. Bump `version` in `package.json` and the changelog heading together.
 5. `npm publish` (needs the maintainer's npm login). Then deprecate old `emdash-privacy` versions.
