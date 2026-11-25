@@ -16,6 +16,7 @@ const CONSENT_CSV_COLUMNS = [
 	"measurement",
 	"marketing",
 	"subjectId",
+	"siteId",
 ] as const;
 
 /** One stored consent record, as written by the `save` route. */
@@ -26,6 +27,8 @@ export interface ConsentRecord {
 	action: string;
 	grants: Record<string, boolean>;
 	subjectId: string;
+	/** The hostname the record was saved under. A label only: plugin storage is already per site. */
+	siteId?: string;
 }
 
 export function csvCell(value: unknown): string {
@@ -52,6 +55,7 @@ export function consentCsvLine(record: ConsentRecord): string {
 		grant("measurement"),
 		grant("marketing"),
 		record.subjectId,
+		record.siteId ?? "",
 	]
 		.map(csvCell)
 		.join(",");

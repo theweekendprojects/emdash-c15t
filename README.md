@@ -76,7 +76,7 @@ Admin → **Privacy** (the sidebar page). It is the only editor for these settin
 | Banner position | Floating bottom-left (default), bottom-right, bottom-center, top-left, top-right, top-center, or a bar at the top or bottom. |
 | Require a choice (blocking wall) | Off (default): non-modal, the site stays usable until the visitor chooses. On: a centred wall dims and locks the page until Accept or Reject (the "consent wall" style). Neither is legally required. |
 | Accent color | Optional CSS color; defaults to your `--color-brand`. |
-| Privacy / Imprint / Cookie URLs | Linked from the banner. A relative path (`/datenschutz`) or an https URL. These pages show no banner. |
+| Privacy / Imprint / Cookie URLs | Linked from the banner. A relative path (`/datenschutz`) or an https URL. A page on this site with that path shows no banner. An https URL on another host does not hide the banner here. |
 | Policy version | **Bump it to ask every visitor again**, for example after adding a service. |
 | Re-ask after N months | Default 12. |
 | Delete records older than N months | Default 36. Pick the period with legal advice. |
@@ -207,10 +207,21 @@ curl -H "Authorization: Bearer ec_pat_..." \
   https://your-site.example/_emdash/api/plugins/emdash-privacy/consent-export
 ```
 
-The admin page shows this URL for your site. The file has one row per record. Columns: `createdAt`,
-`policyVersion`, `bannerVersion`, `action`, `necessary`, `measurement`, `marketing`, `subjectId`. Every cell
-is quoted, and a cell that starts like a spreadsheet formula gets a leading `'`, so it opens as text. The
-response is built in memory, which suits the size of a typical consent history.
+The admin page shows this URL for your site. The file has one row per record, oldest first. Columns: `createdAt`,
+`policyVersion`, `bannerVersion`, `action`, `necessary`, `measurement`, `marketing`, `subjectId`, `siteId`. `siteId` is
+the hostname the choice was saved under (a site reached through two hostnames exports both together). Every cell
+is quoted, and a cell that starts like a spreadsheet formula gets a leading `'`, so it opens as text.
+
+EmDash limits a plugin download to 8 MiB, which is roughly 50 000 to 65 000 records, depending on the length of the hostname. A larger history is refused with `413` and a
+message, never cut short. Export it in parts with `from` (included) and `to` (not included), as ISO dates or
+date-times. Consecutive parts do not overlap and leave no gap:
+
+```bash
+curl -H "Authorization: Bearer ec_pat_..." -o part-1.csv "https://your-site.example/_emdash/api/plugins/emdash-privacy/consent-export?from=2026-01-01&to=2026-07-01"
+curl -H "Authorization: Bearer ec_pat_..." -o part-2.csv "https://your-site.example/_emdash/api/plugins/emdash-privacy/consent-export?from=2026-07-01"
+```
+
+A malformed `from` or `to` is an error (`400`), not ignored.
 
 A token without the `admin` scope gets `403 INSUFFICIENT_SCOPE`. Revoke the token once the export is done.
 
@@ -275,8 +286,9 @@ instead of the one Playwright installs, set `CHROMIUM_PATH`.
   Without SubtleCrypto (plain http, not localhost) nothing is cached. A quota or parse error falls back to the fetch,
   so cache trouble can't break the banner.
 - **Multi-tenant.** The site key comes from the server-side site URL, never from the request body, and a
-  body containing a `siteId` is rejected. The admin record counter is per site. Records live in EmDash
-  plugin storage, so they follow whatever isolation your platform gives plugin storage.
+  body containing a `siteId` is rejected. Records live in EmDash plugin storage, so they follow whatever isolation your
+  platform gives plugin storage. On emdash-multisite each site has its own storage table, so the record count and the
+  export cover that site and no other.
 
 ## License
 

@@ -21,6 +21,8 @@ Renaming the id would orphan existing data.
 | `src/services.ts` | service parsing, checks, preset table, clear-on-revocation map | pure |
 | `src/security.ts` | same-origin check, inline-JSON escaping | pure |
 | `src/export.ts` | CSV rows with formula-injection escaping | pure |
+| `src/export-range.ts` | `from`/`to` parsing for the export | pure |
+| `src/site-id.ts` | `siteIdFrom`: host of the site URL, else of the request | pure |
 | `src/purge.ts` | retention purge (paged, bounded) | server |
 | `src/settings.ts` | `readAllSettings` (one query for all settings) | server |
 | `src/presentation.ts` | banner position mapping, policy-page check | pure |
@@ -43,6 +45,14 @@ Renaming the id would orphan existing data.
 - **Settings**: `ctx.settings.list()` returns `{key, value}` with keys relative to `plugin:<id>:settings:`. One query.
   The `settingsSchema` auto form is NOT declared on purpose: it would write values past our validation.
 - **Storage**: `storage.consents.query()` caps `limit` at **100**. Asking for more silently returns 100.
+  `orderBy` on a JSON field defeats the table's index and re-sorts every match on each page: 7 000 rows took 13 s.
+  Do not pass `orderBy`. With none, EmDash pages in `(created_at, id)` order on the table's own index (0.7 s for the same rows).
+- **Raw responses are limited to 8 MiB.** EmDash throws past it and the client gets a 500. The export stops at 7 MiB and
+  returns 413 with a `from`/`to` hint instead.
+- **`ctx.site.url` can be an empty string** (it is on the staging Worker). Use `||`, not `??`, wherever it falls back.
+  `siteIdFrom()` is the one place that does.
+- **Plugin storage is per site on emdash-multisite** (`_plugin_*` tables get a `$slug` suffix, `isSiteTable` in rewrite.ts).
+  So the export and the record count do not filter by `siteId`; it is only a label in the file.
 - **Private routes** (`public` not set) need a session or an API token. A session also needs `X-EmDash-Request: 1`, or
   EmDash returns `403 CSRF_REJECTED`. A token (`Authorization: Bearer ec_pat_...`) needs the `admin` scope for the export.
 - **Raw responses** (`response: "raw"`): EmDash keeps only an allowlist of headers and sets `nosniff` and
@@ -65,6 +75,7 @@ Renaming the id would orphan existing data.
 ## Non-obvious decisions
 
 - **Stored time is the server's clock.** `givenAt` from the browser is accepted and ignored.
+- **Export is never truncated.** Over the size limit it answers 413 with the `from`/`to` hint. `from` is included, `to` is not.
 - **Save while disabled** returns `{ok: true, stored: false}`. An error would make c15t retry the save forever.
 - **Embed-only sites** (no services) still start c15t with the banner hidden and no reopen button. Otherwise a
   `ConsentEmbed` placeholder could not open the dialog.

@@ -178,3 +178,159 @@ describe("admin reachability", () => {
 		expect(res.status).toBe(403);
 	});
 });
+
+describe("live finding: the site id falls back to the request host when the site URL is empty", () => {
+	// Found on the staging Worker: ctx.site.url is "" there, so `??` did not fall through and every record was stored as "unknown".
+	it("stores the request's host as siteId when the site URL is empty", async () => {
+		const bare = await createRuntime("");
+		runtimes.push(bare);
+		await adminCall(bare, { type: "form_submit", action_id: "save_privacy", values: values() });
+		const res = await call(bare, "save", { method: "POST", headers: SAME_ORIGIN, body: savePayload({ subjectId: "bare" }) });
+		expect(res.status).toBe(200);
+		const row = rawDb().prepare("SELECT data FROM _plugin_storage WHERE collection = 'consents' ORDER BY created_at DESC LIMIT 1").get() as { data: string };
+		expect(JSON.parse(row.data).siteId).toBe("site.example");
+	});
+});
+
+describe("review round 2: export completeness and limits", () => {
+	/** Inserts consent rows directly. 90 000 saves through the route would take far too long. */
+	function seed(count: number, tsAt: (i: number) => number, siteId = "site.example") {
+		const insert = rawDb().prepare(
+			"INSERT INTO _plugin_storage (plugin_id, collection, id, data, created_at, updated_at, revision) VALUES ('emdash-privacy','consents',?,?,?,?,?)",
+		);
+		rawDb().exec("BEGIN");
+		for (let i = 0; i < count; i++) {
+			const ts = tsAt(i);
+			const data = JSON.stringify({ siteId, subjectId: `sub_${String(i).padStart(26, "0")}`, ts, action: "all", grants: { necessary: true, measurement: true, marketing: true }, policyVersion: "1", bannerVersion: "2" });
+			const iso = new Date(ts).toISOString();
+			insert.run(`seed-${siteId}-${i}`, data, iso, iso, `rev-${i}`);
+		}
+		rawDb().exec("COMMIT");
+	}
+	const download = (query?: string, baseUrl?: string) =>
+		call(runtime, "consent-export", { user: ADMIN, headers: { "X-EmDash-Request": "1" }, query, baseUrl });
+
+	it("a history too large for one response is refused with a clear error, never cut short", async () => {
+		seed(90_000, (i) => Date.UTC(2026, 0, 1) + i * 1000);
+		const res = await download();
+		const body = await res.text();
+		expect(res.status).toBe(413);
+		expect(body).toMatch(/too large for one download/);
+		expect(body).toMatch(/from=/);
+		expect(body).not.toMatch(/^"createdAt"/);
+		// 90 000 rows of this size are over EmDash's 8 MiB limit, so this is the real failure the guard prevents.
+		expect(90_000 * 112).toBeGreaterThan(8 * 1024 * 1024);
+	}, 180_000);
+
+	it("from and to slice a large history into parts with no overlap and no gap, in linear time", async () => {
+		const t0 = Date.UTC(2026, 0, 1);
+		seed(90_000, (i) => t0 + i * 1000);
+		const at = (seconds: number) => new Date(t0 + seconds * 1000).toISOString().slice(0, 19) + "Z";
+		const subjects = async (query: string) => {
+			const started = Date.now();
+			const res = await download(query);
+			expect(res.status).toBe(200);
+			const rows = (await res.text()).trim().split("\r\n").slice(1).map((l) => l.split('","')[7]!);
+			return { rows, ms: Date.now() - started };
+		};
+		const a = await subjects(`to=${at(20_000)}`);
+		const b = await subjects(`from=${at(20_000)}&to=${at(40_000)}`);
+		const c = await subjects(`from=${at(40_000)}&to=${at(60_000)}`);
+		// 20 000 rows each: "to" is exclusive and "from" is inclusive, so the parts meet exactly.
+		expect([a.rows.length, b.rows.length, c.rows.length]).toEqual([20_000, 20_000, 20_000]);
+		const id = (n: number) => `sub_${String(n).padStart(26, "0")}`;
+		expect(a.rows[0]).toBe(id(0));
+		expect(a.rows.at(-1)).toBe(id(19_999));
+		expect(b.rows[0]).toBe(id(20_000));
+		expect(b.rows.at(-1)).toBe(id(39_999));
+		expect(c.rows[0]).toBe(id(40_000));
+		expect(new Set([...a.rows, ...b.rows, ...c.rows]).size).toBe(60_000);
+		// The old JSON orderBy made this quadratic: 7 000 rows took 13 s, so 20 000 would take well over a minute.
+		expect(Math.max(a.ms, b.ms, c.ms)).toBeLessThan(40_000);
+	}, 300_000);
+
+	it("rejects a malformed from or to instead of ignoring it", async () => {
+		expect((await download("from=not-a-date")).status).toBe(400);
+		expect((await download("to=2026-13-45")).status).toBe(400);
+	});
+
+	it("exports records saved under different hostnames together (storage is per site, siteId is only a label)", async () => {
+		const bare = await createRuntime("");
+		runtimes.push(bare);
+		await adminCall(bare, { type: "form_submit", action_id: "save_privacy", values: values() });
+		for (const host of ["https://a.example", "https://b.example"]) {
+			const res = await call(bare, "save", {
+				method: "POST",
+				baseUrl: host,
+				headers: { origin: host },
+				body: savePayload({ subjectId: `via-${host}` }),
+			});
+			expect(res.status).toBe(200);
+		}
+		const res = await call(bare, "consent-export", { user: ADMIN, baseUrl: "https://a.example", headers: { "X-EmDash-Request": "1" } });
+		const lines = (await res.text()).trim().split("\r\n");
+		expect(lines.length - 1).toBe(2);
+		// the host each record was saved under stays visible in the file
+		expect(lines.slice(1).join("\n")).toMatch(/a\.example/);
+		expect(lines.slice(1).join("\n")).toMatch(/b\.example/);
+	});
+
+	it("the admin record count includes records saved under every hostname", async () => {
+		const bare = await createRuntime("");
+		runtimes.push(bare);
+		await adminCall(bare, { type: "form_submit", action_id: "save_privacy", values: values() });
+		for (const host of ["https://a.example", "https://b.example"]) {
+			await call(bare, "save", { method: "POST", baseUrl: host, headers: { origin: host }, body: savePayload({ subjectId: host }) });
+		}
+		const page = await adminCall(bare, { type: "page_load" });
+		const body = (await page.json()) as { data: { blocks: Array<{ type: string; items?: Array<{ value: string }> }> } };
+		expect(body.data.blocks.find((b) => b.type === "stats")?.items?.[0]?.value).toBe("2");
+	});
+});
+
+describe("review round 2: policy pages and host", () => {
+	const hidePrompt = async (path: string) => {
+		const fragments = (await fragmentsFor(runtime, path)) as Array<{ code?: string; placement: string }>;
+		const config = JSON.parse(fragments[0]!.code!.replace(/^window\.__emdashPrivacy=/, "").replace(/;$/, ""));
+		return config.hidePrompt as boolean;
+	};
+
+	it("a policy URL hosted elsewhere does not hide the banner on this site's page with the same path", async () => {
+		expect((await submit({ privacyUrl: "https://policies.example.com/privacy" }))?.type).toBe("success");
+		expect(await hidePrompt("/privacy")).toBe(false);
+	});
+
+	it("a policy URL on this host does hide it", async () => {
+		expect((await submit({ privacyUrl: "https://site.example/privacy" }))?.type).toBe("success");
+		expect(await hidePrompt("/privacy")).toBe(true);
+	});
+
+	it("a relative policy URL hides it", async () => {
+		expect((await submit({ privacyUrl: "/privacy" }))?.type).toBe("success");
+		expect(await hidePrompt("/privacy")).toBe(true);
+	});
+});
+
+describe("review round 2: empty settings", () => {
+	const config = async () => {
+		const fragments = (await fragmentsFor(runtime, "/")) as Array<{ code?: string; placement: string }>;
+		return JSON.parse(fragments[0]!.code!.replace(/^window\.__emdashPrivacy=/, "").replace(/;$/, "")) as Record<string, any>;
+	};
+
+	it("clearing the language, position and policy version in the form falls back to the defaults, not to empty values", async () => {
+		const toast = await submit({ language: "", bannerPosition: "", policyVersion: "", accentColor: "" });
+		expect(toast?.type).toBe("success");
+		const c = await config();
+		// language: stored as the default "auto", which follows the page (null here: the test page has no locale)
+		expect(c.bannerPosition).toBe("bottom-left");
+		expect(c.policyVersion).toBe("1");
+		expect(c.rule.copyRevision).toBe("1");
+		expect(c.accentColor).toBeUndefined();
+	});
+
+	it("a policy version made of spaces is not saved as an empty version", async () => {
+		await submit({ policyVersion: "   " });
+		const c = await config();
+		expect(c.policyVersion).toBe("1");
+	});
+});

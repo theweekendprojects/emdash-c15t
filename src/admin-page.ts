@@ -26,14 +26,6 @@ interface Interaction {
 	values?: Record<string, unknown>;
 }
 
-/** Same host-derived tenant key the /save route writes. */
-function siteHost(ctx: RouteContext): string {
-	try {
-		return new URL(ctx.site?.url ?? ctx.request?.url).hostname;
-	} catch {
-		return "unknown";
-	}
-}
 
 /**
  * Block Kit external links must be absolute. `ctx.url()` is only absolute when the site
@@ -69,8 +61,7 @@ async function buildPage(ctx: RouteContext, toast?: { message: string; type: "su
 		cookieMaxAgeMonths: pick("cookieMaxAgeMonths", d.cookieMaxAgeMonths),
 		retentionMonths: pick("retentionMonths", d.retentionMonths),
 	};
-	const siteId = siteHost(ctx);
-	const total = await ctx.storage.consents.count({ siteId });
+	const total = await ctx.storage.consents.count();
 	// Stored config can still be invalid (saved before a validation rule existed, or edited in the DB).
 	// The runtime drops bad entries, so say so here rather than let the banner vanish silently.
 	const stored = parseServices(v.services, parseAllowedHosts(v.allowedScriptHosts).hosts);

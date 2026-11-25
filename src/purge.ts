@@ -11,7 +11,7 @@ export const DAY_MS = 86_400_000;
  * EmDash caps a storage query page at 100 rows (`QueryOptions.limit`: "Default 50, max 100"). Asking for more
  * silently returns 100, so a larger page size would delete less than it reports.
  */
-const PURGE_PAGE_SIZE = 100;
+export const PURGE_PAGE_SIZE = 100;
 
 /** Pages per run. The cron and admin paths clear up to 5 000 rows per run. */
 const PURGE_MAX_PAGES = 50;
@@ -40,9 +40,9 @@ export async function purgeExpired(ctx: PluginContext, maxPages = PURGE_MAX_PAGE
 	const cutoff = retentionCutoff(Date.now(), months);
 	let deleted = 0;
 	for (let i = 0; i < maxPages; i++) {
+		// No orderBy: a JSON orderBy defeats the index and re-sorts every match on each page. Order does not matter for a delete.
 		const res = await ctx.storage.consents.query({
 			where: { ts: { lt: cutoff } },
-			orderBy: { ts: "asc" },
 			limit: PURGE_PAGE_SIZE,
 		});
 		if (!res.items.length) break;
