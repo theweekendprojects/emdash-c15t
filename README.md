@@ -194,10 +194,13 @@ the consent mechanism itself; have a lawyer confirm.
 
 ## Consent records (CSV export)
 
-The admin page shows how many records are stored. To export them, use an API token. EmDash's admin
-routes accept a browser session or a token, and a plain browser link cannot send the header EmDash requires
-for session requests, so the export is a command-line step.
+The Privacy settings page shows how many records are stored and has a **Download consent records (CSV)** link.
+The link is signed and expires after 15 minutes, so a browser can follow it with no API token. Each time the page
+loads it makes a fresh link. For part of the history, fill in **From** and **To** and choose **Create download
+link**. A bad date shows an error and no link.
 
+Automation (scripts, backups) can use an API token instead. EmDash's private admin routes need a browser session or a
+token, and a plain command can't send the header EmDash requires for session requests, so this route is a command-line step.
 1. In EmDash, create an API token with the `admin` scope. Its value starts with `ec_pat_`.
 2. Download the file:
 
@@ -207,7 +210,7 @@ curl -H "Authorization: Bearer ec_pat_..." \
   https://your-site.example/_emdash/api/plugins/emdash-privacy/consent-export
 ```
 
-The admin page shows this URL for your site. The file has one row per record, oldest first. Columns: `createdAt`,
+The admin page shows this URL for your site. The owner link produces the same file. The file has one row per record, oldest first. Columns: `createdAt`,
 `policyVersion`, `bannerVersion`, `action`, `necessary`, `measurement`, `marketing`, `subjectId`, `siteId`. `siteId` is
 the hostname the choice was saved under (a site reached through two hostnames exports both together). Every cell
 is quoted, and a cell that starts like a spreadsheet formula gets a leading `'`, so it opens as text.
@@ -276,9 +279,15 @@ instead of the one Playwright installs, set `CHROMIUM_PATH`.
   per run. A backlog larger than that clears over later days. The daily cron task clears up to 5 000 records per run,
   but the host did not reliably run plugin cron hooks in testing, so do not depend on it.
 - **Stored time.** Every record is stamped with the server's clock when it arrives. The browser's own timestamp is ignored.
-- **Content Security Policy.** The banner bundle is loaded with `fetch` and imported from a `blob:` URL.
-  A strict CSP needs `script-src blob:` (and `'unsafe-inline'` or a nonce for the tiny inline loader).
-  The page context EmDash gives plugins has no nonce field, so the inline loader needs `'unsafe-inline'` under a strict CSP.
+- **Content Security Policy.** The banner does not run under a strict CSP. With `script-src 'self'` and no
+  `'unsafe-inline'`, the browser blocks the loader script, so the banner never appears (tested in Chromium: the console
+  reports a CSP violation). Two EmDash limits cause this. EmDash refuses to serve JavaScript from a plugin route, and it
+  gives plugins no nonce for page fragments. A site that uses this plugin needs:
+  - `script-src 'unsafe-inline' blob:` (the loader is an inline script that imports the bundle from a `blob:` URL).
+  The bundle itself comes from your own origin. Sites that must keep a strict policy should not use this plugin until
+  EmDash supports nonces or plugin scripts. Upstream: [emdash-cms/emdash#4827](https://github.com/emdash-cms/emdash/issues/4827)
+  (hash-based CSP blocks EmDash's own toolbar script) and [#1601](https://github.com/emdash-cms/emdash/issues/1601)
+  (the same class of problem for JSON-LD, now closed).
 - **Weight.** About 1 KB of inline script is added to each page. The bundle (about 405 KB minified, about 117 KB gzipped) is fetched once per browser, then cached in `localStorage` under a content-hash key.
   After that the loader imports it from `localStorage` with no network at all (verified: zero bundle requests on
   later page views). Before running a cached copy the loader checks its SHA-256 against the hash the page was built

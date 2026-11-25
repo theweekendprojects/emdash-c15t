@@ -208,7 +208,8 @@ describe("admin route", () => {
 		const text = body.data.blocks.filter((b) => b.type === "context").map((b) => String(b.text)).join("\n");
 		expect(text).toContain(`${SITE}/_emdash/api/plugins/emdash-privacy/consent-export`);
 		expect(text).toContain('Authorization: Bearer');
-		expect(body.data.blocks.some((b) => b.type === "link")).toBe(false);
+		const links = body.data.blocks.flatMap((b) => (b.type === "actions" ? (b.elements as Array<{ type: string }>) : []));
+		expect(links.some((e) => e.type === "link")).toBe(true);
 	});
 
 	it("rejects invalid services and keeps the previous configuration", async () => {
@@ -476,5 +477,51 @@ describe("admin: stored config warnings", () => {
 		const res = await adminCall(runtime, { type: "page_load" });
 		const body = (await res.json()) as { data: { blocks: Array<{ type: string }> } };
 		expect(body.data.blocks.some((b) => b.type === "banner")).toBe(false);
+	});
+});
+
+describe("owner download link (signed, expiring, no login)", () => {
+	const linkUrl = (page: { data: { blocks: Array<Record<string, any>> } }) => {
+		const link = page.data.blocks.flatMap((b) => (b.type === "actions" ? (b.elements as Array<Record<string, any>>) : [])).find((e) => e.type === "link");
+		return new URL(link!.target.url as string);
+	};
+	const pageOf = async () => (await (await adminCall(runtime, { type: "page_load" })).json()) as { data: { blocks: Array<Record<string, any>> } };
+
+	it("the admin page links to a signed CSV that a browser can follow without a login", async () => {
+		await call(runtime, "save", { method: "POST", body: savePayload(), headers: SAME_ORIGIN });
+		const url = linkUrl(await pageOf());
+		expect(url.pathname).toBe("/_emdash/api/plugins/emdash-privacy/consent-download");
+		const res = await call(runtime, "consent-download", { query: url.search.slice(1) });
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toMatch(/^text\/csv/);
+		expect(await res.text()).toContain("sub_test_1");
+	});
+
+	it("a changed range or forged signature is refused", async () => {
+		const url = linkUrl(await pageOf());
+		const moved = new URLSearchParams(url.search);
+		moved.set("from", "2020-01-01");
+		expect((await call(runtime, "consent-download", { query: moved.toString() })).status).toBe(403);
+		const forged = new URLSearchParams(url.search);
+		forged.set("sig", "0".repeat(64));
+		expect((await call(runtime, "consent-download", { query: forged.toString() })).status).toBe(403);
+	});
+
+	it("a request without a link is refused", async () => {
+		expect((await call(runtime, "consent-download", { query: "" })).status).toBe(403);
+	});
+
+	it("a bad range on the form gives an error and no link", async () => {
+		const res = await adminCall(runtime, { type: "form_submit", action_id: "prepare_export", values: { from: "nope", to: "" } });
+		const body = (await res.json()) as { data: { blocks: Array<Record<string, any>>; toast: { type: string } } };
+		expect(body.data.toast.type).toBe("error");
+		expect(body.data.blocks.some((b) => b.type === "actions" && (b.elements as Array<{ type: string }>).some((e) => e.type === "link"))).toBe(false);
+	});
+
+	it("a range from the form is carried in the link", async () => {
+		const res = await adminCall(runtime, { type: "form_submit", action_id: "prepare_export", values: { from: "2026-01-01", to: "2026-07-01" } });
+		const url = linkUrl((await res.json()) as { data: { blocks: Array<Record<string, any>> } });
+		expect(url.searchParams.get("from")).toBe("2026-01-01");
+		expect(url.searchParams.get("to")).toBe("2026-07-01");
 	});
 });
