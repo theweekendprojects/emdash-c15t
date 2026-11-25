@@ -13,6 +13,15 @@ stored in your own Cloudflare D1. No third-party consent backend, no CDN, no pai
 > GDPR/TDDDG requirements and does not guarantee compliance. Have your setup and your privacy policy
 > reviewed by a lawyer. It does not generate an Impressum or a Datenschutzerklärung.
 
+## Requirements and limits
+
+- **EmDash** 1.2.0 or newer (the peer range). CI runs the full suite on EmDash 1.2.0 and 1.6.0.
+- **Node.js** 22.16 or newer for EmDash. Developing this package needs 22.23.4 or newer.
+- **Browsers.** Tested in Chromium (desktop and phone-sized emulation). Firefox and Safari are not tested yet.
+- **Strict Content Security Policy is not supported.** The banner does not run under `script-src 'self'`
+  without `'unsafe-inline'`. See [Operating notes](#operating-notes) for what to allow and why.
+- **Microsoft UET is not offered as a preset** (see Tracked services).
+
 ## What you get
 
 - **Opt-in for every visitor.** Optional categories (Analytics, Marketing) are denied until the visitor
@@ -176,7 +185,7 @@ import { translations as fr } from "@c15t/translations/fr";
 export const bundledTranslations = { de, en, fr };
 ```
 
-Each language adds about 6 KB. Importing the `@c15t/translations/all` barrel adds about 285 KB, so avoid it.
+Each language you add grows the bundle. Do not import the `@c15t/translations/all` barrel: it adds about 285 KB.
 
 ### Policy pages
 
@@ -247,8 +256,6 @@ window.emdashPrivacy.openDialog();
 
 Any element with the attribute `data-emdash-privacy-open` also opens the dialog when clicked.
 
-Note: `window.c15t` is c15t's debug object, not the API. Use `window.emdashPrivacy`.
-
 ## Development
 
 Development requires Node 22.23.4 or newer (the Astro 7 toolchain). The integration tests also use `node:sqlite`. EmDash itself needs Node 22.16 or newer.
@@ -298,6 +305,10 @@ instead of the one Playwright installs, set `CHROMIUM_PATH`.
   body containing a `siteId` is rejected. Records live in EmDash plugin storage, so they follow whatever isolation your
   platform gives plugin storage. On emdash-multisite each site has its own storage table, so the record count and the
   export cover that site and no other.
+
+## Changes
+
+See [CHANGELOG.md](CHANGELOG.md). Version 0.3.0 adds the owner download link for the consent records and documents the strict-CSP limit.
 
 ## License
 
