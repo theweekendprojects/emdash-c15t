@@ -21,6 +21,7 @@ import { siteIdFrom } from "./site-id.js";
 import { consentCsvLine, csvHeaderLine, type ConsentRecord } from "./export.js";
 import { parseExportRange, rangeWhere, type ExportRange } from "./export-range.js";
 import { checkExportLink, DOWNLOAD_ROUTE, exportSecret } from "./export-link.js";
+import { CONSENT_DEFAULT_DENIED, needsConsentDefaults } from "./consent-mode.js";
 import { isSameOriginRequest, safeInlineJson } from "./security.js";
 import { LAZY_PURGE_MAX_PAGES, PURGE_PAGE_SIZE, purgeDue, purgeExpired } from "./purge.js";
 import { isPolicyPage } from "./presentation.js";
@@ -374,6 +375,17 @@ export const privacyHooks = {
 			};
 
 			const fragments: PageFragmentContribution[] = [
+				// Google Consent Mode defaults first (before any Google tag can run), only when a Google service is set.
+				...(needsConsentDefaults(s.services)
+					? [
+							{
+								kind: "inline-script" as const,
+								placement: "head" as const,
+								code: CONSENT_DEFAULT_DENIED,
+								key: "emdash-privacy-consent-default",
+							},
+						]
+					: []),
 				{
 					// Config + loader in head. The loader imports the bundle from
 					// localStorage when present (no network at all), so there is NO

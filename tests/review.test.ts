@@ -291,7 +291,7 @@ describe("review round 2: export completeness and limits", () => {
 describe("review round 2: policy pages and host", () => {
 	const hidePrompt = async (path: string) => {
 		const fragments = (await fragmentsFor(runtime, path)) as Array<{ code?: string; placement: string }>;
-		const config = JSON.parse(fragments[0]!.code!.replace(/^window\.__emdashPrivacy=/, "").replace(/;$/, ""));
+		const config = JSON.parse(fragments.find((f) => (f as { key?: string }).key === "emdash-privacy-config")!.code!.replace(/^window\.__emdashPrivacy=/, "").replace(/;$/, ""));
 		return config.hidePrompt as boolean;
 	};
 
@@ -314,7 +314,7 @@ describe("review round 2: policy pages and host", () => {
 describe("review round 2: empty settings", () => {
 	const config = async () => {
 		const fragments = (await fragmentsFor(runtime, "/")) as Array<{ code?: string; placement: string }>;
-		return JSON.parse(fragments[0]!.code!.replace(/^window\.__emdashPrivacy=/, "").replace(/;$/, "")) as Record<string, any>;
+		return JSON.parse(fragments.find((f) => (f as { key?: string }).key === "emdash-privacy-config")!.code!.replace(/^window\.__emdashPrivacy=/, "").replace(/;$/, "")) as Record<string, any>;
 	};
 
 	it("clearing the language, position and policy version in the form falls back to the defaults, not to empty values", async () => {

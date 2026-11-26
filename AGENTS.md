@@ -115,7 +115,7 @@ test serves the real runtime output and the real bundle, and intercepts vendor r
 ## Release checklist
 
 1. `npm run build:client`, `npm run typecheck`, `npm run selfcheck`, `npm test`. All green on Node 22.23.5.
-2. `npm pack --dry-run`: 28 files, including `THIRD_PARTY_LICENSES.md`, no `*.selfcheck.ts`, no `tests/`.
+2. `npm pack --dry-run`: 29 files, including `THIRD_PARTY_LICENSES.md`, no `*.selfcheck.ts`, no `tests/`.
 3. `npm audit --omit=dev` is clean. Dev findings are acceptable only when they are dev tooling and fixed upstream.
 4. Bump `version` in `package.json` and the changelog heading together.
 5. `npm publish` (needs the maintainer's npm login). Then deprecate old `emdash-privacy` versions.

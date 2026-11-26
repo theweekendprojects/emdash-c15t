@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+- **Google Consent Mode defaults are sent before any choice.** When a Google service is configured, the page now
+  sets the Consent Mode v2 defaults to `denied` in `<head>` before any Google tag could run. The Google tag itself
+  still loads only after consent, and the stub loads no script. Before, no consent state reached Google until the
+  visitor chose. Once a choice exists, the state is `granted` or `denied` as before.
+- Browser tests check the Consent Mode state before a choice, after accept, and after reject, and that no Google
+  request is made after reject.
+
 ## 0.3.0
 - **Owner download link.** The Privacy settings page has a "Download consent records (CSV)" link. It needs no API
   token and works from a normal browser click. The link is signed, expires after 15 minutes, and is made fresh on every
