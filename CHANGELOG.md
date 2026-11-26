@@ -7,6 +7,8 @@
   visitor chose. Once a choice exists, the state is `granted` or `denied` as before.
 - Browser tests check the Consent Mode state before a choice, after accept, and after reject, and that no Google
   request is made after reject.
+- Documentation: the README corrects the GPC behaviour (the banner still shows; optional categories are denied). New
+  `docs/TESTING.md` lists every test, how to run them, and the live results, with the known gaps.
 
 ## 0.3.0
 - **Owner download link.** The Privacy settings page has a "Download consent records (CSV)" link. It needs no API
