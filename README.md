@@ -17,7 +17,7 @@ stored in your own Cloudflare D1. No third-party consent backend, no CDN, no pai
 
 - **EmDash** 1.2.0 or newer (the peer range). CI runs the full suite on EmDash 1.2.0 and 1.6.0.
 - **Node.js** 22.16 or newer for EmDash. Developing this package needs 22.23.4 or newer.
-- **Browsers.** Tested in Chromium (desktop and phone-sized emulation). Firefox and Safari are not tested yet.
+- **Browsers.** Tested in Chromium (desktop and phone-sized emulation) and Firefox. Safari (WebKit) is not tested yet. Test coverage is listed in [docs/TESTING.md](docs/TESTING.md).
 - **Strict Content Security Policy is not supported.** The banner does not run under `script-src 'self'`
   without `'unsafe-inline'`. See [Operating notes](#operating-notes) for what to allow and why.
 - **Microsoft UET is not offered as a preset** (see Tracked services).
@@ -34,8 +34,8 @@ stored in your own Cloudflare D1. No third-party consent backend, no CDN, no pai
   not just blocked from loading again (c15t `clearOnRevocation`).
 - **Google Consent Mode v2** from the official c15t Google tag helper. Consent defaults are `denied` before
   any choice and `update` follows the real choice. The Google tag itself is not loaded before consent.
-- **GPC** (`Sec-GPC` / `navigator.globalPrivacyControl`): optional categories stay denied and no banner
-  is shown.
+- **GPC** (`Sec-GPC` / `navigator.globalPrivacyControl`): optional categories stay denied and no Google
+  request is made. The banner still appears, so the visitor can still choose (tested live; see docs/TESTING.md).
 - **Looks like your site.** Colors, font and radius come from your own CSS variables (`--color-brand`,
   `--color-bg`, `--color-text`, `--color-border`, `--font-body`, ...) with neutral fallbacks, and light/dark
   follows your page live, including a theme toggle. Set an accent color in settings to override the brand color.
@@ -257,6 +257,8 @@ window.emdashPrivacy.openDialog();
 Any element with the attribute `data-emdash-privacy-open` also opens the dialog when clicked.
 
 ## Development
+
+Test inventory, how to run each suite, and the live test results: [docs/TESTING.md](docs/TESTING.md).
 
 Development requires Node 22.23.4 or newer (the Astro 7 toolchain). The integration tests also use `node:sqlite`. EmDash itself needs Node 22.16 or newer.
 
