@@ -311,15 +311,15 @@ describe("CSV export", () => {
 });
 
 describe("page:fragments (banner injection)", () => {
-	function configOf(fragments: Array<{ code?: string; placement?: string }>) {
-		const head = fragments.find((f) => f.placement === "head");
-		const json = head!.code!.replace(/^window\.__emdashPrivacy=/, "").replace(/;$/, "");
+	function configOf(fragments: Array<{ code?: string; placement?: string; key?: string }>) {
+		const config = fragments.find((f) => f.key === "emdash-privacy-config");
+		const json = config!.code!.replace(/^window\.__emdashPrivacy=/, "").replace(/;$/, "");
 		return JSON.parse(json) as Record<string, any>;
 	}
 
 	it("injects the config in head and the loader at body end", async () => {
 		const fragments = (await fragmentsFor(runtime, "/")) as Array<{ code?: string; placement?: string }>;
-		expect(fragments.map((f) => f.placement)).toEqual(["head", "body:end"]);
+		expect(fragments.map((f) => f.placement)).toEqual(["head", "head", "body:end"]);
 		const config = configOf(fragments);
 		expect(config.services.map((s: { id: string }) => s.id)).toEqual(["ga4", "meta"]);
 		expect(config.hidePrompt).toBe(false);
@@ -327,6 +327,19 @@ describe("page:fragments (banner injection)", () => {
 		expect(config.clearOnRevocation.measurement.cookies).toEqual(["_ga", "_ga_*"]);
 	});
 
+	it("sends Consent Mode defaults (denied) in head before the config when a Google service is set", async () => {
+		const fragments = (await fragmentsFor(runtime, "/")) as Array<Record<string, any>>;
+		expect(fragments[0]).toMatchObject({ kind: "inline-script", placement: "head", key: "emdash-privacy-consent-default" });
+		expect(fragments[0].code).toContain('consent","default"');
+		expect(fragments[0].code).toContain('analytics_storage:"denied"');
+		expect(fragments[0].code).not.toContain("<script");
+	});
+	it("sends no Consent Mode stub when no Google service is configured", async () => {
+		await saveSettings(runtime, { services: JSON.stringify([{ id: "meta", name: "Meta", category: "marketing", preset: "meta-pixel", options: { pixelId: "123456789012345" } }]) });
+		const fragments = (await fragmentsFor(runtime, "/")) as Array<{ key?: string; placement?: string }>;
+		expect(fragments.map((f) => f.key)).not.toContain("emdash-privacy-consent-default");
+		expect(fragments.map((f) => f.placement)).toEqual(["head", "body:end"]);
+	});
 	it("passes the page language candidate, not a resolved language", async () => {
 		const fragments = (await fragmentsFor(runtime, "/", "fr-CH")) as Array<{ code?: string; placement?: string }>;
 		expect(configOf(fragments).language).toBe("fr");

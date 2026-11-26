@@ -85,7 +85,8 @@ beforeAll(async () => {
 				placement: string;
 				code?: string;
 			}>;
-			const head = fragments.find((f) => f.placement === "head")?.code ?? "";
+			// Every head fragment, in order: the Consent Mode defaults (when a Google service is set) come before the config.
+			const head = fragments.filter((f) => f.placement === "head").map((f) => f.code ?? "").join("\n");
 			const loader = fragments.find((f) => f.placement === "body:end")?.code ?? "";
 			const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" };
 			const csp = CSP_BY_PATH[url.pathname];
@@ -484,6 +485,64 @@ describe("content security policy (documented limits)", () => {
 		const { context, page, consoleErrors } = await visitAndWait("/csp-inline-only");
 		expect(await shadowText(page)).not.toMatch(/Accept all|Alle akzeptieren/);
 		expect(consoleErrors.some((e) => /Content Security Policy/i.test(e))).toBe(true);
+		await context.close();
+	}, 60_000);
+});
+
+describe("Google Consent Mode defaults (denied until a choice)", () => {
+	type ConsentCall = { kind: string; state: Record<string, string> };
+	/** Every consent command the page pushed to dataLayer (the Google Consent Mode API), in order. */
+	async function consentCalls(page: Page): Promise<ConsentCall[]> {
+		return page.evaluate(() =>
+			Array.from((window as unknown as { dataLayer?: ArrayLike<unknown> }).dataLayer ?? [])
+				.map((e) => Array.from(e as ArrayLike<unknown>))
+				.filter((c) => c[0] === "consent")
+				.map((c) => ({ kind: String(c[1]), state: c[2] as Record<string, string> })),
+		);
+	}
+	/** Waits until the last consent command sets analytics to the wanted value. */
+	async function waitForAnalytics(page: Page, want: "granted" | "denied") {
+		for (let i = 0; i < 40; i++) {
+			const calls = await consentCalls(page);
+			if (calls.at(-1)?.state?.analytics_storage === want) return calls;
+			await page.waitForTimeout(250);
+		}
+		throw new Error(`consent state never became ${want}: ${JSON.stringify(await consentCalls(page))}`);
+	}
+
+	it("before any choice: the default is denied, and no Google request is made", async () => {
+		externalRequests.length = 0;
+		const { context, page, consoleErrors } = await openPage("/");
+		const calls = await consentCalls(page);
+		expect(calls[0]?.kind).toBe("default");
+		expect(calls[0]?.state).toMatchObject({ analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" });
+		expect(vendorCalls()).toEqual([]);
+		expect(consoleErrors).toEqual([]);
+		await context.close();
+	}, 60_000);
+
+	it("after accept: the state becomes granted", async () => {
+		externalRequests.length = 0;
+		const { context, page, consoleErrors } = await openPage("/");
+		const saved = page.waitForResponse(isSaveRequest);
+		expect(await clickButton(page, ACCEPT)).toBe(true);
+		expect((await saved).status()).toBe(200);
+		const calls = await waitForAnalytics(page, "granted");
+		expect(calls.at(-1)?.state).toMatchObject({ ad_storage: "granted", analytics_storage: "granted" });
+		expect(consoleErrors).toEqual([]);
+		await context.close();
+	}, 60_000);
+
+	it("after reject: the state is denied, and the Google tag is never requested", async () => {
+		externalRequests.length = 0;
+		const { context, page, consoleErrors } = await openPage("/");
+		const saved = page.waitForResponse(isSaveRequest);
+		expect(await clickButton(page, REJECT)).toBe(true);
+		expect((await saved).status()).toBe(200);
+		const calls = await waitForAnalytics(page, "denied");
+		expect(calls.at(-1)?.state).toMatchObject({ ad_storage: "denied", analytics_storage: "denied" });
+		expect(vendorCalls()).toEqual([]);
+		expect(consoleErrors).toEqual([]);
 		await context.close();
 	}, 60_000);
 });
